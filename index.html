@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Phage-Go!</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <main id="app">
+      <canvas id="game" width="1600" height="900" aria-label="Phage-Go juego del ciclo litico"></canvas>
+      <div id="loading">Cargando assets...</div>
+      <div id="menuButtons" class="menu-buttons">
+        <button id="normalButton" class="menu-icon-button" type="button" data-label="Fácil" aria-label="Modo fácil">
+          <img src="assets_webp/phage_easy.webp" alt="">
+        </button>
+        <button id="hardButton" class="menu-icon-button" type="button" data-label="Difícil" aria-label="Modo difícil">
+          <img src="assets_webp/phage_hard.webp" alt="">
+        </button>
+      </div>
+      <button id="restartButton" class="text-button hidden" type="button">Reiniciar</button>
+    </main>
+    <script src="game.js"></script>
+  </body>
+</html>
