@@ -5,8 +5,13 @@ const menuButtons = document.getElementById("menuButtons");
 const normalButton = document.getElementById("normalButton");
 const hardButton = document.getElementById("hardButton");
 const restartButton = document.getElementById("restartButton");
+const playfield = document.getElementById("playfield");
+const menuButton = document.getElementById("menuButton");
+const fullscreenButton = document.getElementById("fullscreenButton");
+const rotateNotice = document.getElementById("rotateNotice");
+const displayNotice = document.getElementById("displayNotice");
 
-const W = 1600;
+let W = 1600;
 const H = 900;
 const TURN_SPEED = 3.2;
 const THRUST = 620;
@@ -18,11 +23,18 @@ const ACTIVE_RADIUS = 2600;
 const BACTERIA_UNIT = 644;
 const MIN_BACTERIA_DISTANCE = BACTERIA_UNIT;
 const CAMERA_LERP = 0.038;
-const LYSIS_BURST_SECONDS = 3;
 const HARD_MODE_DURATION_MS = 10 * 60 * 1000;
 const TARGET_DNA = 5;
 const TARGET_PHAGES = 5;
 const SAFE_MARGIN = 24;
+const DOCK_SECONDS = 0.85;
+const INFECTION_REACH = 150;
+const INTERIOR_SCALE = 1.45;
+const ESCAPE_SECONDS = 2.4;
+const AMBIENT_COUNT = 6;
+const BUBBLE_COMBO_WINDOW = 3.5;
+const ENERGY_SECONDS = 8;
+const ENERGY_SPEED_MULTIPLIER = 1.65;
 const LYSIS_PHAGE_LAYOUT = [
   { x: -250, y: -35, rotation: -0.18 },
   { x: -125, y: 30, rotation: 0.12 },
@@ -31,8 +43,6 @@ const LYSIS_PHAGE_LAYOUT = [
   { x: 250, y: -30, rotation: -0.12 },
 ];
 const QUALITY = {
-  backgroundBacteria: 26,
-  bubbles: 112,
   particlesMax: 220,
 };
 
@@ -43,8 +53,10 @@ const State = {
   INJECTION: "injection",
   DNA_REPLICATION: "dna_replication",
   NUCLEOTIDE_MINIGAME: "nucleotide_minigame",
+  BIOSYNTHESIS: "biosynthesis",
   PART_ASSEMBLY: "part_assembly",
   LYSIS: "lysis",
+  ESCAPE: "escape",
   COMPLETE: "complete",
 };
 
@@ -54,9 +66,9 @@ const GameMode = {
 };
 
 const PARALLAX_LAYERS = [
-  { key: "far", factor: 0.18, cell: 520, density: 0.88, minScale: 0.12, maxScale: 0.24, minAlpha: 0.08, maxAlpha: 0.14 },
-  { key: "mid", factor: 0.38, cell: 680, density: 0.68, minScale: 0.22, maxScale: 0.38, minAlpha: 0.12, maxAlpha: 0.32 },
-  { key: "near", factor: 0.62, cell: 620, density: 0.58, minScale: 0.34, maxScale: 0.54, minAlpha: 0.18, maxAlpha: 0.65 },
+  { key: "far", factor: 0.18, cell: 300, density: 0.88, diameter: 64, minAlpha: 0.08, maxAlpha: 0.14 },
+  { key: "mid", factor: 0.38, cell: 400, density: 0.78, diameter: 106, minAlpha: 0.16, maxAlpha: 0.28 },
+  { key: "near", factor: 0.62, cell: 540, density: 0.68, diameter: 168, minAlpha: 0.32, maxAlpha: 0.52 },
 ];
 
 const BUBBLE_LAYERS = [
@@ -135,7 +147,7 @@ const touchControls = {
 let lastTime = 0;
 let state = State.INTRO;
 let stateTime = 0;
-let camera = { x: 0, y: 0 };
+let camera = { x: 0, y: 0, zoom: 1 };
 let player;
 let bacteriaField;
 let targetBacteria = null;
@@ -146,12 +158,22 @@ let injectionProgress = 0;
 let dragItem = null;
 let spaceWasDown = false;
 let spaceTap = false;
+let pendingActionTaps = 0;
+let pausedAt = null;
+let landscapeReady = true;
+let displayNoticeTimeout;
+let infectionView = null;
+let escape = null;
+let worldTime = 0;
+let ambientLife = [];
+const depthSprites = [];
+const backgroundFields = [];
+let bubbleStats = { total: 0, combo: 0, cooldown: 0, energy: 0 };
+const silhouetteGlows = {};
 let replication;
 let nucleotideGame = null;
 let assembly;
 let lysis;
-let bgBacteria = [];
-let bubbles = [];
 let particles = [];
 let currentProcCell = { x: null, y: null };
 let gameMode = GameMode.NORMAL;
@@ -160,8 +182,6 @@ let kills = 0;
 let hardModeStartedAt = 0;
 let lysisStartedAt = 0;
 let infectedBacteriaSeeds = new Set();
-let infectionTimer = 0;
-let infectionTimerMax = 0;
 let toastMessage = "";
 let toastTimer = 0;
 let mobileControls = false;
@@ -177,8 +197,10 @@ const stageInfo = {
   [State.INJECTION]: ["Inyeccion", 2, "Manten ESPACIO para inyectar el ADN."],
   [State.DNA_REPLICATION]: ["Replicacion", 3, "Haz click en el ADN para duplicarlo o procesarlo."],
   [State.NUCLEOTIDE_MINIGAME]: ["Nucleotidos", 4, "Arrastra cada nucleotido al slot con su misma letra."],
+  [State.BIOSYNTHESIS]: ["Fabricación", 4, "La bacteria fabrica las piezas del fago."],
   [State.PART_ASSEMBLY]: ["Ensamblaje", 5, "Junta cabeza, cuerpo y patas para formar un fago."],
   [State.LYSIS]: ["Lisis", 6, "Pulsa ESPACIO rapidamente para liberar los fagos."],
+  [State.ESCAPE]: ["Nuevos fagos", 6, "¡Libre! Sigue explorando con uno de los fagos que creaste."],
 };
 
 canvas.width = W;
@@ -197,38 +219,13 @@ function loadImages() {
 }
 
 function init() {
-  bgBacteria = Array.from({ length: QUALITY.backgroundBacteria }, (_, i) => {
-    const drift = rand(0.08, 0.65);
-    const t = (drift - 0.08) / (0.65 - 0.08);
-    const scale = lerp(0.12, 0.58, t);
-    const alpha = lerp(0.06, 0.65, t);
-    
-    const isDestroyed = rand(0, 1) < 0.75;
-    const bgIndex = isDestroyed ? Math.floor(rand(5, 9)) : Math.floor(rand(1, 5));
-    
-    return {
-      image: img[`bg${bgIndex}`],
-      x: rand(-80, W + 80),
-      y: rand(-80, H + 80),
-      scale,
-      rotation: rand(-Math.PI, Math.PI),
-      alpha,
-      drift,
-    };
-  });
-  bubbles = Array.from({ length: QUALITY.bubbles }, () => ({
-    x: rand(0, W),
-    y: rand(0, H),
-    r: rand(7, 30),
-    alpha: rand(0.08, 0.35),
-    speed: rand(4, 18),
-    sprite: Math.floor(rand(0, 3)),
-  }));
   rebuildRenderCaches();
+  initAmbientLife();
   resetGame();
 }
 
 function resetGame() {
+  playfield.classList.remove("playing");
   state = State.INTRO;
   stateTime = 0;
   gameMode = GameMode.NORMAL;
@@ -238,13 +235,19 @@ function resetGame() {
   infectedBacteriaSeeds = new Set();
   poppedBubbles.clear();
   resetTouchControls();
+  keys.clear();
+  pendingActionTaps = 0;
+  spaceWasDown = false;
   resetCycleState(330, 470, 0.65);
   menuButtons.classList.remove("hidden");
+  menuButton.classList.add("hidden");
   restartButton.classList.add("hidden");
 }
 
 function resetCycleState(x = player?.x || 330, y = player?.y || 470, rotation = player?.rotation || 0.65) {
-  camera = { x: 0, y: 0 };
+  camera = { x: 0, y: 0, zoom: 1 };
+  infectionView = null;
+  escape = null;
   targetBacteria = null;
   attachPose = null;
   attachCandidate = null;
@@ -277,14 +280,18 @@ function resetCycleState(x = player?.x || 330, y = player?.y || 470, rotation = 
     activeParts: [],
     completePhages: [],
     joining: { headBody: false, bodyLegs: false },
+    packed: false,
+    pendingDna: null,
+    returnDelay: 0,
     message: "",
     messageTimer: 0,
   };
-  lysis = { pressure: 0, burst: false, burstTime: 0, burstStartedAt: 0, released: [] };
-  infectionTimer = 0;
+  lysis = { pressure: 0, damageProgress: 0, burst: false, burstTime: 0, burstStartedAt: 0, released: [] };
 }
 
 function startGame(mode) {
+  if (isDisplayBlocked()) return;
+  playfield.classList.add("playing");
   gameMode = mode;
   score = 0;
   kills = 0;
@@ -293,7 +300,9 @@ function startGame(mode) {
   poppedBubbles.clear();
   resetCycleState(330, 470, 0.65);
   updateProceduralBacteriaIfNeeded(true);
+  bubbleStats = { total: 0, combo: 0, cooldown: 0, energy: 0 };
   menuButtons.classList.add("hidden");
+  menuButton.classList.remove("hidden");
   restartButton.classList.add("hidden");
   setState(State.SEARCH);
 }
@@ -305,7 +314,7 @@ function makeBacteria(x, y, scale, rotation, variant, health = "healthy", seed =
     x,
     y,
     scale,
-    rotation,
+    rotation: infected ? 0 : rotation,
     variant: infected ? 6 : variant,
     health: finalHealth,
     healthy: finalHealth === "healthy" && isHealthyBacteriaVariant(variant),
@@ -327,6 +336,8 @@ function rebuildRenderCaches() {
   layers.backgroundStatic = createLayer();
   buildStaticBackgroundLayer();
   buildGlowSprites();
+  buildDepthSprites();
+  buildSilhouetteGlows();
 }
 
 function buildStaticBackgroundLayer() {
@@ -357,6 +368,21 @@ function buildGlowSprites() {
   glowSprites.green = makeGlowSprite(420, "rgba(147, 241, 124, 0.18)");
   glowSprites.yellow = makeGlowSprite(420, "rgba(238, 226, 100, 0.12)");
   glowSprites.cyan = makeGlowSprite(180, "rgba(122, 230, 255, 0.26)");
+  // Paint once: each visible bubble costs one drawImage, without per-frame gradients.
+  const bubble = createLayer(128, 128);
+  const c = bubble.getContext("2d");
+  const fill = c.createRadialGradient(44, 38, 4, 64, 64, 59);
+  fill.addColorStop(0, "rgba(215, 252, 255, 0.025)");
+  fill.addColorStop(0.8, "rgba(155, 225, 246, 0.035)");
+  fill.addColorStop(1, "rgba(180, 244, 255, 0.18)");
+  c.fillStyle = fill;
+  c.beginPath(); c.arc(64, 64, 58, 0, Math.PI * 2); c.fill();
+  c.strokeStyle = "rgba(205, 250, 255, 0.36)"; c.lineWidth = 1.5; c.stroke();
+  c.strokeStyle = "rgba(244, 255, 255, 0.65)"; c.lineWidth = 3;
+  c.beginPath(); c.arc(64, 64, 51, 3.65, 4.75); c.stroke();
+  c.strokeStyle = "rgba(128, 216, 240, 0.25)"; c.lineWidth = 2;
+  c.beginPath(); c.arc(64, 64, 53, 0.4, 1.2); c.stroke();
+  glowSprites.bubble = bubble;
 }
 
 function makeGlowSprite(size, color) {
@@ -441,31 +467,52 @@ function resolveBacteriaPhysics() {
 }
 
 function setState(next) {
+  if (next === State.INJECTION && targetBacteria) infectionView = { camera: { ...camera }, rotation: targetBacteria.rotation };
   state = next;
+  if (next !== State.SEARCH) resetJoystick();
   stateTime = 0;
   dragItem = null;
   mouse.down = false;
   mouse.justDown = false;
   mouse.justUp = false;
   if (next !== State.INTRO) menuButtons.classList.add("hidden");
+  menuButton.classList.toggle("hidden", next === State.INTRO);
   if (next !== State.COMPLETE) restartButton.classList.add("hidden");
 }
 
 function loop(time) {
   const dt = Math.min(0.033, (time - lastTime) / 1000 || 0);
   lastTime = time;
+  if (isDisplayBlocked() || document.hidden) {
+    if (pausedAt === null) pausedAt = performance.now();
+    requestAnimationFrame(loop);
+    return;
+  }
+  if (pausedAt !== null) {
+    const pauseDuration = performance.now() - pausedAt;
+    if (hardModeStartedAt) hardModeStartedAt += pauseDuration;
+    if (lysisStartedAt) lysisStartedAt += pauseDuration;
+    if (lysis.burstStartedAt) lysis.burstStartedAt += pauseDuration;
+    pausedAt = null;
+  }
   stateTime += dt;
   const actionDown = keys.has(" ") || keys.has("Spacebar") || touchControls.actionDown;
-  spaceTap = actionDown && !spaceWasDown;
+  const actionTaps = pendingActionTaps;
+  pendingActionTaps = 0;
+  spaceTap = actionTaps > 0 || (actionDown && !spaceWasDown);
   spaceWasDown = actionDown;
-  update(dt, actionDown);
+  update(dt, actionDown, actionTaps);
   render(dt);
   mouse.justDown = false;
   mouse.justUp = false;
   requestAnimationFrame(loop);
 }
 
-function update(dt, spaceDown) {
+function update(dt, spaceDown, actionTaps = spaceTap ? 1 : 0) {
+  worldTime += dt;
+  updateAmbientLife(dt);
+  updateBubbleEnergy(dt);
+  if ([State.DNA_REPLICATION, State.NUCLEOTIDE_MINIGAME, State.BIOSYNTHESIS, State.PART_ASSEMBLY].includes(state)) updateConstructedPhages(dt);
   if (player) {
     player.animTime += dt;
     if (player.collisionTimer > 0) player.collisionTimer -= dt;
@@ -482,35 +529,27 @@ function update(dt, spaceDown) {
   if (replication.messageTimer > 0) replication.messageTimer -= dt;
   if (assembly.messageTimer > 0) assembly.messageTimer -= dt;
 
-  if (state === State.DNA_REPLICATION || 
-      state === State.NUCLEOTIDE_MINIGAME || 
-      state === State.PART_ASSEMBLY || 
-      state === State.LYSIS) {
-    if (infectionTimer > 0 && !lysis.burst) {
-      infectionTimer -= dt;
-      if (infectionTimer <= 0) {
-        infectionTimer = 0;
-        abortInfection();
-        return;
-      }
-    }
-  }
-
   if (state === State.SEARCH) updateSearch(dt);
   if (state === State.ADSORPTION) updateAdsorption(dt, spaceDown);
   if (state === State.INJECTION) updateInjection(dt, spaceDown);
   if (state === State.DNA_REPLICATION) updateDnaReplication(dt);
   if (state === State.NUCLEOTIDE_MINIGAME) updateNucleotideMinigame(dt);
+  if (state === State.BIOSYNTHESIS && stateTime >= 3) {
+    createPhagePartsFromDna(assembly.pendingDna);
+    setState(State.PART_ASSEMBLY);
+  }
   if (state === State.PART_ASSEMBLY) updatePartAssembly(dt);
-  if (state === State.LYSIS) updateLysis(dt);
+  if (state === State.LYSIS) updateLysis(dt, actionTaps);
+  else if (state === State.ESCAPE) updateEscape(dt);
 }
 
 function updateSearch(dt) {
   updateProceduralBacteriaIfNeeded();
   const movement = getMovementInput();
+  const boost = bubbleStats.energy > 0 ? ENERGY_SPEED_MULTIPLIER : 1;
   if (movement.mobileActive || movement.simpleActive) {
-    player.vx += movement.x * THRUST * dt;
-    player.vy += movement.y * THRUST * dt;
+    player.vx += movement.x * THRUST * boost * dt;
+    player.vy += movement.y * THRUST * boost * dt;
     if (Math.hypot(movement.x, movement.y) > 0.05) {
       player.rotation = lerpAngle(player.rotation, Math.atan2(movement.x, -movement.y), 0.18);
     }
@@ -520,21 +559,21 @@ function updateSearch(dt) {
 
     const forward = getForward(player.rotation);
     if (movement.up) {
-      player.vx += forward.x * THRUST * dt;
-      player.vy += forward.y * THRUST * dt;
+      player.vx += forward.x * THRUST * boost * dt;
+      player.vy += forward.y * THRUST * boost * dt;
     }
     if (movement.down) {
-      player.vx -= forward.x * REVERSE_THRUST * dt;
-      player.vy -= forward.y * REVERSE_THRUST * dt;
+      player.vx -= forward.x * REVERSE_THRUST * boost * dt;
+      player.vy -= forward.y * REVERSE_THRUST * boost * dt;
     }
   }
 
   player.vx *= Math.pow(DRAG, dt * 60);
   player.vy *= Math.pow(DRAG, dt * 60);
   const speed = Math.hypot(player.vx, player.vy);
-  if (speed > MAX_SPEED) {
-    player.vx = (player.vx / speed) * MAX_SPEED;
-    player.vy = (player.vy / speed) * MAX_SPEED;
+  if (speed > MAX_SPEED * boost) {
+    player.vx = (player.vx / speed) * MAX_SPEED * boost;
+    player.vy = (player.vy / speed) * MAX_SPEED * boost;
   }
   player.x += player.vx * dt;
   player.y += player.vy * dt;
@@ -543,24 +582,22 @@ function updateSearch(dt) {
   resolveBacteriaPhysics();
 
   attachCandidate = null;
+  let closestDistance = Infinity;
   for (const b of bacteriaField) {
     if (!isBacteriaInteractable(b)) continue;
     const result = canAttachToBacteria(player, b);
-    if (result.valid) {
+    if (result.valid && result.distance < closestDistance) {
       attachCandidate = b;
-      attachPose = {
-        x: player.x,
-        y: player.y,
-        rotation: player.rotation,
-        feet: result.feet,
-        bacteria: b,
-      };
-      break;
+      closestDistance = result.distance;
     }
   }
 
   if (attachCandidate && (keys.has(" ") || keys.has("Spacebar") || touchControls.actionDown)) {
+    clearBubbleEnergy();
     targetBacteria = attachCandidate;
+    attachPose = getDockPose(player, targetBacteria);
+    attachPose.start = { x: player.x, y: player.y, rotation: player.rotation };
+    attachTimer = 0;
     player.vx = 0;
     player.vy = 0;
     keys.delete(" ");
@@ -576,21 +613,25 @@ function updateSearch(dt) {
 }
 
 function updateAdsorption(dt, spaceDown) {
-  player.x = lerp(player.x, attachPose.x, 0.14);
-  player.y = lerp(player.y, attachPose.y, 0.14);
-  player.rotation = lerpAngle(player.rotation, attachPose.rotation, 0.14);
+  attachTimer = Math.min(DOCK_SECONDS, attachTimer + dt);
+  const t = smoothstep(0, DOCK_SECONDS, attachTimer);
+  player.x = lerp(attachPose.start.x, attachPose.x, t);
+  player.y = lerp(attachPose.start.y, attachPose.y, t);
+  player.rotation = lerpAngle(attachPose.start.rotation, attachPose.rotation, t);
   camera.x = lerp(camera.x, targetBacteria.x - W * 0.5, 0.08);
   camera.y = lerp(camera.y, targetBacteria.y - H * 0.52, 0.08);
-  attachPose.x = player.x;
-  attachPose.y = player.y;
-  attachPose.rotation = player.rotation;
-  attachPose.feet = getPhageFeetPoint(player);
-  if (stateTime > 0.25 && (spaceDown || spaceTap)) setState(State.INJECTION);
+  if (attachTimer >= DOCK_SECONDS && (spaceDown || spaceTap)) setState(State.INJECTION);
 }
 
 function updateInjection(dt, spaceDown) {
+  const t = smoothstep(0, 0.95, stateTime);
+  const zoom = lerp(infectionView.camera.zoom || 1, INTERIOR_SCALE / targetBacteria.scale, t);
+  camera.zoom = zoom;
+  camera.x = lerp(infectionView.camera.x, targetBacteria.x - W * 0.5 / zoom, t);
+  camera.y = lerp(infectionView.camera.y, targetBacteria.y - H * 0.52 / zoom, t);
   if (spaceDown) injectionProgress = clamp(injectionProgress + dt * 0.36, 0, 1);
   if (injectionProgress >= 1) {
+    targetBacteria.rotation = 0;
     createInitialDnaFromInjection();
     setState(State.DNA_REPLICATION);
   }
@@ -609,8 +650,6 @@ function createInitialDnaFromInjection() {
     duplicated: false,
     processed: false,
   }];
-  infectionTimerMax = gameMode === GameMode.HARD ? 40 : 60;
-  infectionTimer = infectionTimerMax;
 }
 
 function updateDnaReplication(dt) {
@@ -722,7 +761,7 @@ function dropNucleotideOnSlot(item) {
         matched = true;
         spawnParticle(slot.x, slot.y, "#9be8ff", 16);
       } else {
-        nucleotideGame.message = `${item.code} no va en el slot ${slot.code}.`;
+        nucleotideGame.message = `Prueba otra vez: coloca ${slot.code} sobre ${slot.code}.`;
         nucleotideGame.messageTimer = 1.2;
       }
       break;
@@ -730,20 +769,17 @@ function dropNucleotideOnSlot(item) {
   }
   if (matched && nucleotideGame.slots.every(slot => slot.filled)) {
     nucleotideGame.dna.processed = true;
-    createPhagePartsFromDna(nucleotideGame.dna);
+    assembly.pendingDna = nucleotideGame.dna;
     nucleotideGame = null;
-    setState(State.PART_ASSEMBLY);
+    setState(State.BIOSYNTHESIS);
   }
 }
 
 function createPhagePartsFromDna(dna) {
-  const baseX = dna.x;
-  const baseY = dna.y;
-  assembly.activeParts = [
-    makePart("head", baseX - 90, baseY - 50),
-    makePart("body", baseX + 15, baseY - 30),
-    makePart("legs", baseX + 75, baseY + 60),
-  ];
+  assembly.returnDelay = 0;
+  const baseX = W / 2, baseY = H * 0.52;
+  assembly.activeParts = [makePart("head", baseX - 210, baseY - 45), makePart("body", baseX, baseY - 10), makePart("legs", baseX + 210, baseY + 25), makePart("genome", baseX - 190, baseY + 120)];
+  assembly.packed = false;
   for (const part of assembly.activeParts) {
     keepInsideBacteria(part, 60);
   }
@@ -780,7 +816,13 @@ function updatePartAssembly(dt) {
   for (const part of assembly.activeParts) {
     keepInsideBacteria(part, 60);
   }
-  if (assembly.activeParts.length === 0 && assembly.completed >= TARGET_PHAGES) setState(State.LYSIS);
+  if (assembly.activeParts.length === 0) {
+    if (assembly.completed >= TARGET_PHAGES) setState(State.LYSIS);
+    else if (assembly.returnDelay > 0) {
+      assembly.returnDelay -= dt;
+      if (assembly.returnDelay <= 0) setState(State.DNA_REPLICATION);
+    }
+  }
 }
 
 function trySnapParts() {
@@ -788,6 +830,19 @@ function trySnapParts() {
   const body = assembly.activeParts.find(p => p.kind === "body");
   const legs = assembly.activeParts.find(p => p.kind === "legs");
   if (!head || !body || !legs) return;
+
+  if (!assembly.packed) {
+    const genome = assembly.activeParts.find(p => p.kind === "genome");
+    if (genome && Math.hypot(genome.x - head.x, genome.y - head.y) < 90) {
+      assembly.packed = true;
+      assembly.activeParts = assembly.activeParts.filter(p => p !== genome);
+      spawnParticle(head.x, head.y, "#ffdd69", 20);
+      sayAssembly("¡ADN protegido! Ahora une cabeza y cola.");
+    } else {
+      sayAssembly("Primero arrastra el ADN al interior de la cabeza.");
+    }
+    return;
+  }
 
   if (!assembly.joining.headBody && Math.hypot(head.x - body.x, head.y - body.y) < 75) {
     assembly.joining.headBody = true;
@@ -819,97 +874,97 @@ function completePhageFromParts(x, y) {
   });
   assembly.activeParts = [];
   spawnParticle(x, y, "#f6e56e", 30);
-  if (assembly.completed >= TARGET_PHAGES) {
-    setTimeout(() => {
-      if (state === State.PART_ASSEMBLY) setState(State.LYSIS);
-    }, 450);
-  } else {
-    setTimeout(() => {
-      if (state === State.PART_ASSEMBLY) setState(State.DNA_REPLICATION);
-    }, 650);
+  assembly.returnDelay = 0.65;
+}
+
+function updateLysis(dt, taps = spaceTap ? 1 : 0) {
+  if (!lysisStartedAt) lysisStartedAt = performance.now();
+  if (taps > 0 && !lysis.burst) {
+    lysis.pressure = clamp(lysis.pressure + 0.105 * taps, 0, 1);
+    spawnParticle(W * 0.5 + rand(-280, 280), H * 0.5 + rand(-80, 80), "#e9fb79", 8);
+  }
+  lysis.damageProgress = Math.min(lysis.pressure, lysis.damageProgress + dt * 0.85);
+  if (lysis.damageProgress >= 1 && !lysis.burst) {
+    lysis.burst = true;
+    lysis.burstStartedAt = performance.now();
+    for (let i = 0; i < 18; i++) {
+      const angle = i === 0 ? -0.6 : i * Math.PI * 2 / 17;
+      const speed = i === 0 ? 570 : rand(180, 350);
+      lysis.released.push({
+        x: W * 0.5 + (i === 0 ? 190 : rand(-230, 230)), y: H * 0.52 + rand(-65, 65),
+        vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+        rotation: angle + Math.PI / 2, hero: i === 0,
+      });
+    }
+    spawnParticle(W * 0.5, H * 0.52, "#d9ef80", 96);
+  }
+  if (lysis.burst) {
+    lysis.burstTime += dt;
+    for (const p of lysis.released) { p.x += p.vx * dt; p.y += p.vy * dt; }
+    if (lysis.burstTime >= 0.55) beginEscape();
   }
 }
 
-function updateLysis(dt) {
-  if (!lysisStartedAt) lysisStartedAt = performance.now();
-  lysis.pressure = clamp(lysis.pressure - dt * 0.08, 0, 1);
-  if (spaceTap && !lysis.burst) {
-    lysis.pressure = clamp(lysis.pressure + 0.105, 0, 1);
-    spawnParticle(W * 0.5 + rand(-280, 280), H * 0.5 + rand(-80, 80), "#e9fb79", 8);
+function beginEscape() {
+  if (!targetBacteria) return;
+  const zoom = camera.zoom || 1;
+  for (const p of lysis.released) {
+    const world = screenToWorld(p.x, p.y);
+    p.x = world.x; p.y = world.y; p.vx /= zoom; p.vy /= zoom; p.scale = 0.18 / zoom;
   }
-  if (lysis.pressure >= 1 && !lysis.burst) {
-    lysis.burst = true;
-    lysis.burstTime = 0;
-    lysis.burstStartedAt = performance.now();
-    for (const layout of LYSIS_PHAGE_LAYOUT) {
-      const originX = W * 0.5 + layout.x;
-      const originY = H * 0.52 + layout.y;
-      const dir = normalize({ x: layout.x || rand(-1, 1), y: layout.y || rand(-1, 1) });
-      const a = Math.atan2(dir.y, dir.x);
-      lysis.released.push({
-        x: originX,
-        y: originY,
-        vx: dir.x * rand(230, 430),
-        vy: dir.y * rand(170, 340),
-        rotation: layout.rotation,
-      });
-    }
-    for (let i = 0; i < 100; i += 1) spawnParticle(W * 0.5 + rand(-220, 220), H * 0.52 + rand(-90, 90), i % 2 ? "#a8e36f" : "#f7ef73", 4);
-  }
-  if (lysis.burst) {
-    lysis.burstTime = (performance.now() - lysis.burstStartedAt) / 1000;
-    for (const p of lysis.released) {
-      p.x += p.vx * dt;
-      p.y += p.vy * dt;
-      p.rotation += dt * 1.5;
-      p.vx *= 0.99;
-      p.vy *= 0.99;
-    }
-    if (lysis.burstTime > LYSIS_BURST_SECONDS) {
-      if (gameMode === GameMode.HARD) returnToFlightAfterKill();
-      else setState(State.COMPLETE);
-    }
-  }
+  targetBacteria.variant = 6;
+  targetBacteria.health = "broken";
+  targetBacteria.healthy = false;
+  targetBacteria.infectable = false;
+  infectedBacteriaSeeds.add(targetBacteria.seed);
+  escape = { elapsed: 0, camera: { ...camera }, hero: lysis.released[0], startScale: 0.18 / zoom };
+  setState(State.ESCAPE);
+  clearHeldInputs();
+}
+
+function updateEscape(dt) {
+  escape.elapsed = Math.min(ESCAPE_SECONDS, escape.elapsed + dt);
+  const t = smoothstep(0, ESCAPE_SECONDS, escape.elapsed);
+  for (const p of lysis.released) { p.x += p.vx * dt; p.y += p.vy * dt; }
+  const hero = escape.hero;
+  hero.scale = lerp(escape.startScale, 0.24, t);
+  camera.zoom = lerp(escape.camera.zoom, 1, t);
+  camera.x = lerp(escape.camera.x, hero.x - W * 0.5 / camera.zoom, t);
+  camera.y = lerp(escape.camera.y, hero.y - H * 0.5 / camera.zoom, t);
+  if (escape.elapsed >= ESCAPE_SECONDS) returnToFlightAfterKill();
 }
 
 function returnToFlightAfterKill() {
   const bonus = performance.now() - lysisStartedAt < 8000 ? 25 : 0;
   score += 100 + bonus;
-  kills += 1;
-  if (targetBacteria) infectedBacteriaSeeds.add(targetBacteria.seed);
-  const base = targetBacteria || { x: player.x, y: player.y };
-  resetCycleState(base.x + 520, base.y - 260, -0.75);
-  player.vx = 130;
-  player.vy = -90;
+  kills++;
+  const hero = { ...escape.hero }, view = { ...camera };
+  resetCycleState(hero.x, hero.y, hero.rotation);
+  camera = view;
+  player.vx = hero.vx; player.vy = hero.vy; player.animTime = worldTime;
   updateProceduralBacteriaIfNeeded(true);
   setState(State.SEARCH);
+  toastMessage = "¡Ciclo completado! Ahora guías a uno de los nuevos fagos.";
+  toastTimer = 3;
 }
 
-function abortInfection() {
-  const b = targetBacteria;
-  if (b) {
-    b.health = "healthy";
-    b.infectable = true;
-    b.healthy = true;
+function drawEscape() {
+  drawWorldBacteria();
+  const t = smoothstep(0, ESCAPE_SECONDS, escape.elapsed);
+  ctx.save(); ctx.scale(camera.zoom, camera.zoom); ctx.translate(-camera.x, -camera.y);
+  for (const p of lysis.released) {
+    const scale = p.hero ? p.scale : p.scale * (1 - t) ** 1.5;
+    if (p.hero) drawGlow(p.x, p.y, "cyan", 0.65);
+    drawPhageFrame(p.x, p.y, scale, p.rotation, Math.floor(worldTime * 12) % 3);
   }
-  const baseX = b ? b.x : player.x;
-  const baseY = b ? b.y : player.y;
-
-  resetCycleState(baseX + 520, baseY - 260, -0.75);
-  player.vx = 130;
-  player.vy = -90;
-  updateProceduralBacteriaIfNeeded(true);
-  setState(State.SEARCH);
-
-  toastMessage = "¡Tiempo agotado! La bacteria se ha recuperado";
-  toastTimer = 2.5;
+  ctx.restore();
 }
 
 function handleDrag(items, onDrop) {
   if (mouse.justDown && !dragItem) {
     for (let i = items.length - 1; i >= 0; i -= 1) {
       const item = items[i];
-      const radius = item.kind === "nucleotide" ? 68 : item.kind === "legs" ? 60 : 50;
+      const radius = item.kind === "nucleotide" ? 68 : item.kind === "legs" ? 70 : 64;
       if (hit(mouse, item.x, item.y, radius)) {
         dragItem = item;
         item.dragging = true;
@@ -918,6 +973,7 @@ function handleDrag(items, onDrop) {
     }
   }
   if (dragItem && mouse.down) {
+    const oldX = dragItem.x, oldY = dragItem.y;
     dragItem.x = mouse.x;
     dragItem.y = mouse.y;
     if (state === State.PART_ASSEMBLY && assembly.activeParts.includes(dragItem)) {
@@ -931,6 +987,10 @@ function handleDrag(items, onDrop) {
         const angle = Math.atan2(dy * rx, dx * ry);
         dragItem.x = center.x + Math.cos(angle) * rx;
         dragItem.y = center.y + Math.sin(angle) * ry;
+      }
+      if (assembly.joining.headBody && ["head", "body"].includes(dragItem.kind)) {
+        const partner = assembly.activeParts.find(p => p.kind === (dragItem.kind === "head" ? "body" : "head"));
+        if (partner) { partner.x += dragItem.x - oldX; partner.y += dragItem.y - oldY; }
       }
     }
   }
@@ -953,67 +1013,202 @@ function render(dt) {
   drawBackground(dt);
   if (state === State.INTRO) drawIntro();
   if (state === State.SEARCH || state === State.ADSORPTION) drawSearchWorld();
+  if (![State.INTRO, State.SEARCH, State.ADSORPTION, State.ESCAPE, State.COMPLETE].includes(state)) drawWorldBacteria(targetBacteria);
   if (state === State.INJECTION) drawInjection();
   if (state === State.DNA_REPLICATION) drawDnaReplication();
   if (state === State.NUCLEOTIDE_MINIGAME) drawNucleotideMinigame();
+  if (state === State.BIOSYNTHESIS) drawBiosynthesis();
   if (state === State.PART_ASSEMBLY) drawPartAssembly();
   if (state === State.LYSIS) drawLysis();
+  if (state === State.ESCAPE) drawEscape();
   if (state === State.COMPLETE) drawComplete();
   drawParticles();
+  if (state === State.SEARCH && bubbleStats.energy > 0) drawEnergyEffect();
   if (stageInfo[state]) drawHud();
+}
+
+function buildDepthSprites() {
+  depthSprites.length = 0;
+  backgroundFields.length = 0;
+  const cache = {};
+  const keys = [...Array.from({ length: 8 }, (_, i) => `bg${i + 1}`), ...Array.from({ length: 6 }, (_, i) => `bacteriaOutside${i + 1}`)];
+  // Keep the original RGB values. Uniform blue paint cannot reproduce alpha
+  // compositing over a changing background, so use the original appearance.
+  for (const key of keys) cache[key] = { image: img[key], ratio: 1 };
+  for (let frame = 0; frame < 3; frame++) {
+    const sprite = createLayer(192, 192), c = sprite.getContext("2d");
+    c.drawImage(img.phageSprite, (frame % 2) * 1024, Math.floor(frame / 2) * 1024, 1024, 1024, 0, 0, 192, 192);
+    cache[`phage${frame}`] = { image: sprite, ratio: 1024 * 0.458 / 192 };
+  }
+  // All layers share the same small cache; only their original opacity differs.
+  for (const layer of PARALLAX_LAYERS) depthSprites.push(cache);
+}
+
+function drawDepthImage(key, x, y, scale, rotation, layer, alpha) {
+  const sprite = depthSprites[layer][key];
+  const config = PARALLAX_LAYERS[layer];
+  ctx.save();
+  ctx.globalAlpha = alpha ?? (config.minAlpha + config.maxAlpha) * 0.5;
+  drawImageCenter(sprite.image, x, y, scale * sprite.ratio, rotation);
+  ctx.restore();
+}
+
+function drawBacteriaSkin(key, x, y, scale, rotation) {
+  const source = img[key];
+  drawImageCenter(source, x, y, scale * 805 / source.width, rotation);
+}
+
+function drawCellInterior() {
+  drawBacteriaSkin("bacteriaInside", W / 2, H * 0.52, INTERIOR_SCALE, 0);
+}
+
+function makeBackgroundCell(layerIndex, gx, gy) {
+  const layer = PARALLAX_LAYERS[layerIndex];
+  const seed = hash2(gx, gy, 1000 + layerIndex * 97);
+  if (seeded(seed) > layer.density) return null;
+  const diameter = layer.diameter * lerp(0.93, 1.07, seeded(seed + 17));
+  // Each rotated sprite fits in its own cell with a gap to every neighbour.
+  // Both scenery and infections use these SAME slots, avoiding duplicate cells.
+  const margin = layer.diameter * 1.07 / 2 + 24;
+  const destroyed = seeded(seed + 53) < 0.75;
+  const variant = destroyed ? Math.floor(seeded(seed + 59) * 4) + 5 : Math.floor(seeded(seed + 59) * 4) + 1;
+  return {
+    id: `${layerIndex}:${gx}:${gy}`, layer: layerIndex, seed,
+    x: gx * layer.cell + margin + seeded(seed + 3) * (layer.cell - 2 * margin),
+    y: gy * layer.cell + margin + seeded(seed + 9) * (layer.cell - 2 * margin),
+    diameter, rotation: -Math.PI + seeded(seed + 41) * Math.PI * 2,
+    alpha: lerp(layer.minAlpha, layer.maxAlpha, seeded(seed + 29)), key: `bg${variant}`,
+  };
+}
+
+function getBackgroundCells(layerIndex) {
+  const layer = PARALLAX_LAYERS[layerIndex];
+  const startX = Math.floor(camera.x * layer.factor / layer.cell) - 1;
+  const startY = Math.floor(camera.y * layer.factor / layer.cell) - 1;
+  const cols = Math.ceil(W / layer.cell) + 3, rows = Math.ceil(H / layer.cell) + 3;
+  let field = backgroundFields[layerIndex];
+  if (!field || field.startX !== startX || field.startY !== startY || field.cols !== cols || field.rows !== rows) {
+    const cells = [];
+    for (let gx = startX; gx < startX + cols; gx++) for (let gy = startY; gy < startY + rows; gy++) {
+      const cell = makeBackgroundCell(layerIndex, gx, gy);
+      if (cell) cells.push(cell);
+    }
+    field = backgroundFields[layerIndex] = { startX, startY, cols, rows, cells };
+  }
+  return field.cells;
+}
+
+function initAmbientLife() {
+  ambientLife = [];
+  for (let i = 0; i < AMBIENT_COUNT; i++) ambientLife.push(makeAmbientScene(i, true));
+}
+
+function makeAmbientScene(index, initial = false, recycling = false) {
+  const layer = index % PARALLAX_LAYERS.length, config = PARALLAX_LAYERS[layer];
+  const used = new Set(ambientLife.filter((s, i) => s && i !== index).map(s => s.cellId));
+  const cells = getBackgroundCells(layer);
+  let candidates = cells.filter(c => !used.has(c.id));
+  if (recycling) {
+    const offscreen = candidates.filter(c => {
+      const x = c.x - camera.x * config.factor, y = c.y - camera.y * config.factor, radius = c.diameter / 2;
+      return x + radius < 0 || x - radius > W || y + radius < 0 || y - radius > H;
+    });
+    if (offscreen.length) candidates = offscreen;
+  }
+  // Prefer an original healthy silhouette for the cell hosting an infection.
+  const healthy = candidates.filter(c => c.key === "bg1" || c.key === "bg2");
+  const options = healthy.length ? healthy : candidates;
+  const centerX = camera.x * config.factor + W / 2, centerY = camera.y * config.factor + H / 2;
+  options.sort((a, b) => Math.hypot(a.x - centerX, a.y - centerY) - Math.hypot(b.x - centerX, b.y - centerY));
+  const cell = options[Math.min(index % 2, options.length - 1)];
+  const scene = {
+    ...cell, cellId: cell.id, index, time: initial ? (index * 4.7) % 22 : 0,
+    duration: 26 + seeded(cell.seed + 71) * 8, phase: "swim", released: [],
+    phageScale: cell.diameter / 805 * 0.42,
+  };
+  const body = { x: cell.x, y: cell.y, rotation: cell.rotation, rx: cell.diameter * 0.47, ry: cell.diameter * 0.21 };
+  const probe = localToWorld(cell.x, cell.y, cell.rotation, 0, cell.diameter);
+  scene.dock = getDockPose({ ...probe, scale: scene.phageScale }, body);
+  const outward = rotatePoint(0, 1, cell.rotation), tangent = rotatePoint(1, 0, cell.rotation);
+  const point = (normal, side) => ({
+    x: scene.dock.x + cell.diameter * (outward.x * normal + tangent.x * side),
+    y: scene.dock.y + cell.diameter * (outward.y * normal + tangent.y * side),
+  });
+  scene.path = [point(1.1, -0.6), point(1.3, 0.7), point(0.5, 0), { x: scene.dock.x, y: scene.dock.y }];
+  scene.phase = ambientPhase(scene.time);
+  return scene;
+}
+
+function ambientPhase(time) {
+  return time < 5 ? "swim" : time < 7 ? "dock" : time < 19 ? "infected" : time < 22 ? "burst" : "rest";
+}
+
+function getAmbientPhagePose(scene, time = scene.time) {
+  const t = smoothstep(0, 7, time), u = 1 - t;
+  const [a, b, c, d] = scene.path;
+  const x = u ** 3 * a.x + 3 * u * u * t * b.x + 3 * u * t * t * c.x + t ** 3 * d.x;
+  const y = u ** 3 * a.y + 3 * u * u * t * b.y + 3 * u * t * t * c.y + t ** 3 * d.y;
+  const vx = 3 * u * u * (b.x - a.x) + 6 * u * t * (c.x - b.x) + 3 * t * t * (d.x - c.x);
+  const vy = 3 * u * u * (b.y - a.y) + 6 * u * t * (c.y - b.y) + 3 * t * t * (d.y - c.y);
+  const heading = Math.atan2(vx, -vy);
+  return { x, y, vx, vy, rotation: time >= 7 ? scene.dock.rotation : lerpAngle(heading, scene.dock.rotation, smoothstep(5, 7, time)) };
+}
+
+function updateAmbientLife(dt) {
+  for (let i = 0; i < ambientLife.length; i++) {
+    let scene = ambientLife[i];
+    // Rebind only after leaving the cached neighbourhood. The shared slot is
+    // never drawn twice, and the pool remains six actors at any camera position.
+    if (!getBackgroundCells(scene.layer).some(c => c.id === scene.cellId)) {
+      scene = ambientLife[i] = makeAmbientScene(i, true, true);
+    }
+    scene.time += dt;
+    if (scene.time >= scene.duration) scene.time %= scene.duration;
+    scene.phase = ambientPhase(scene.time);
+  }
+}
+
+function drawBackgroundSlot(key, cell) {
+  const layer = PARALLAX_LAYERS[cell.layer], source = img[key];
+  const scale = cell.diameter / Math.max(source.width, source.height);
+  drawDepthImage(key, cell.x - camera.x * layer.factor, cell.y - camera.y * layer.factor, scale, cell.rotation, cell.layer, cell.alpha);
+}
+
+function drawAmbientLife(layerIndex) {
+  const factor = PARALLAX_LAYERS[layerIndex].factor;
+  for (const scene of ambientLife) {
+    if (scene.layer !== layerIndex) continue;
+    const damage = scene.time < 7 ? 1 : scene.time < 19 ? Math.min(5, 1 + Math.floor((scene.time - 7) / 2.8)) : 6;
+    drawBackgroundSlot(`bacteriaOutside${damage}`, scene);
+    if (scene.time < 19) {
+      const pose = getAmbientPhagePose(scene);
+      const frame = scene.time < 7 ? Math.floor((worldTime + scene.index * 0.23) * 10) % 3 : 0;
+      drawDepthImage(`phage${frame}`, pose.x - camera.x * factor, pose.y - camera.y * factor, scene.phageScale, pose.rotation, layerIndex, scene.alpha);
+    } else if (scene.phase === "burst") {
+      const t = scene.time - 19;
+      for (let i = 0; i < 4; i++) {
+        const angle = i * Math.PI / 2 + scene.rotation;
+        const vx = Math.cos(angle) * scene.diameter * 0.9, vy = Math.sin(angle) * scene.diameter * 0.9;
+        const frame = Math.floor((worldTime + i * 0.2) * 10) % 3;
+        drawDepthImage(`phage${frame}`, scene.x - camera.x * factor + vx * t, scene.y - camera.y * factor + vy * t, scene.phageScale, Math.atan2(vx, -vy), layerIndex, scene.alpha * (1 - smoothstep(1.5, 3, t)));
+      }
+    }
+  }
 }
 
 function drawBackground(dt) {
   ctx.drawImage(layers.backgroundStatic, 0, 0);
-  drawBackgroundBacteria();
-  for (let i = 0; i < PARALLAX_LAYERS.length; i += 1) drawParallaxLayer(PARALLAX_LAYERS[i], i);
+  for (let i = 0; i < PARALLAX_LAYERS.length; i++) {
+    drawParallaxLayer(PARALLAX_LAYERS[i], i);
+    drawAmbientLife(i);
+  }
   drawWorldBubbles();
 }
 
-function drawBackgroundBacteria() {
-  const margin = 300;
-  const wrapW = W + margin * 2;
-  const wrapH = H + margin * 2;
-
-  for (const b of bgBacteria) {
-    const valX = b.x - camera.x * b.drift + margin;
-    const drawX = ((valX % wrapW) + wrapW) % wrapW - margin;
-
-    const valY = b.y - camera.y * b.drift + margin;
-    const drawY = ((valY % wrapH) + wrapH) % wrapH - margin;
-
-    ctx.save();
-    ctx.globalAlpha = b.alpha;
-    drawImageCenter(b.image, drawX, drawY, b.scale, b.rotation);
-    ctx.restore();
-  }
-}
-
 function drawParallaxLayer(layer, layerIndex) {
-  const camX = camera.x * layer.factor;
-  const camY = camera.y * layer.factor;
-  const startX = Math.floor(camX / layer.cell) - 1;
-  const endX = Math.floor((camX + W) / layer.cell) + 1;
-  const startY = Math.floor(camY / layer.cell) - 1;
-  const endY = Math.floor((camY + H) / layer.cell) + 1;
-  for (let gx = startX; gx <= endX; gx += 1) {
-    for (let gy = startY; gy <= endY; gy += 1) {
-      const seed = hash2(gx, gy, 1000 + layerIndex * 97);
-      if (seeded(seed) > layer.density) continue;
-      const x = gx * layer.cell + seeded(seed + 3) * layer.cell - camX;
-      const y = gy * layer.cell + seeded(seed + 9) * layer.cell - camY;
-      const scale = layer.minScale + seeded(seed + 17) * (layer.maxScale - layer.minScale);
-      const alpha = layer.minAlpha + seeded(seed + 29) * (layer.maxAlpha - layer.minAlpha);
-      
-      const isDestroyed = seeded(seed + 53) < 0.75;
-      const bgIndex = isDestroyed ? Math.floor(seeded(seed + 59) * 4) + 5 : Math.floor(seeded(seed + 59) * 4) + 1;
-      const image = img[`bg${bgIndex}`];
-      
-      ctx.save();
-      ctx.globalAlpha = alpha;
-      drawImageCenter(image, x, y, scale, -Math.PI + seeded(seed + 41) * Math.PI * 2);
-      ctx.restore();
-    }
+  for (const cell of getBackgroundCells(layerIndex)) {
+    if (ambientLife.some(scene => scene.cellId === cell.id)) continue;
+    drawBackgroundSlot(cell.key, cell);
   }
 }
 
@@ -1033,9 +1228,9 @@ function drawWorldBubbles() {
         const id = `${layerIndex}:${gx}:${gy}`;
         if (poppedBubbles.has(id)) continue;
         const size = layer.minSize + seeded(seed + 23) * (layer.maxSize - layer.minSize);
-        const sprite = img.bubble;
+        const sprite = glowSprites.bubble;
         const x = gx * layer.cell + seeded(seed + 5) * layer.cell - camX;
-        const y = gy * layer.cell + seeded(seed + 13) * layer.cell - camY + Math.sin(stateTime * 0.9 + seed) * 10;
+        const y = gy * layer.cell + seeded(seed + 13) * layer.cell - camY + Math.sin(worldTime * 0.9 + seed) * 10;
         ctx.drawImage(sprite, x - size / 2, y - size / 2, size, size);
       }
     }
@@ -1059,9 +1254,10 @@ function resolveBubbleCollisions() {
         if (poppedBubbles.has(id)) continue;
         const size = layer.minSize + seeded(seed + 23) * (layer.maxSize - layer.minSize);
         const x = gx * layer.cell + seeded(seed + 5) * layer.cell;
-        const y = gy * layer.cell + seeded(seed + 13) * layer.cell + Math.sin(stateTime * 0.9 + seed) * 10;
+        const y = gy * layer.cell + seeded(seed + 13) * layer.cell + Math.sin(worldTime * 0.9 + seed) * 10;
         if (Math.hypot(body.x - x, body.y - y) > size * 0.52 + 36) continue;
         poppedBubbles.set(id, performance.now() + 12000);
+        registerBubblePop();
         player.collisionTimer = 0.16;
         spawnBubblePop(x - camera.x, y - camera.y, size);
       }
@@ -1098,15 +1294,34 @@ function drawIntro() {
   drawImageCenter(img.title, safeCenterX(), safeY(240), 0.56, 0);
 }
 
-function drawSearchWorld() {
+function worldToScreen(x, y) {
+  const zoom = camera.zoom || 1;
+  return { x: (x - camera.x) * zoom, y: (y - camera.y) * zoom };
+}
+
+function screenToWorld(x, y) {
+  const zoom = camera.zoom || 1;
+  return { x: camera.x + x / zoom, y: camera.y + y / zoom };
+}
+
+function drawWorldBacteria(exclude = null) {
   ctx.save();
+  ctx.scale(camera.zoom || 1, camera.zoom || 1);
+  ctx.translate(-camera.x, -camera.y);
+  for (const b of bacteriaField) {
+    if (b === exclude || !isVisibleWorld(b.x, b.y, 720)) continue;
+    if (b === attachCandidate && state === State.SEARCH) drawSilhouetteGlow("bacteriaOutside1", b.x, b.y, b.scale, b.rotation);
+    drawBacteriaSkin(`bacteriaOutside${b.variant}`, b.x, b.y, b.scale, b.rotation);
+  }
+  ctx.restore();
+}
+
+function drawSearchWorld() {
+  drawWorldBacteria();
+  ctx.save();
+  ctx.scale(camera.zoom || 1, camera.zoom || 1);
   ctx.translate(-camera.x, -camera.y);
   drawMapBackdrop();
-  for (const b of bacteriaField) {
-    if (!isVisibleWorld(b.x, b.y, 720)) continue;
-    if (isBacteriaInteractable(b)) drawGlow(b.x, b.y, "green", b.rx / 210);
-    drawImageCenter(img[`bacteriaOutside${b.variant}`], b.x, b.y, b.scale, b.rotation);
-  }
   drawGlow(player.x, player.y, "cyan", 0.65);
   drawPhageFrame(player.x, player.y, player.scale, player.rotation, getPlayerFrameIndex());
   ctx.restore();
@@ -1125,43 +1340,34 @@ function drawMapBackdrop() {
   }
 }
 
-function drawInjection() {
-  const b = targetBacteria;
-  const viewX = W * 0.5;
-  const viewY = H * 0.52;
-  const scale = 1.22;
-  const outsideAlpha = 1 - smoothstep(0.1, 0.85, injectionProgress);
-  const insideAlpha = smoothstep(0.12, 0.9, injectionProgress);
-  ctx.save();
-  ctx.globalAlpha = outsideAlpha;
-  drawImageCenter(img[`bacteriaOutside${b.variant}`], viewX, viewY, scale, b.rotation);
-  ctx.restore();
-  ctx.save();
-  ctx.globalAlpha = insideAlpha;
-  drawImageCenter(img.bacteriaInside, viewX, viewY, scale, b.rotation);
-  ctx.restore();
-
-  // Calculate dynamic phage position and scale relative to target bacteria's centered zoom
-  const localPos = worldToLocal(b.x, b.y, b.rotation, attachPose.x, attachPose.y);
-  const normLocalX = localPos.x / b.scale;
-  const normLocalY = localPos.y / b.scale;
-  const injLocalX = normLocalX * scale;
-  const injLocalY = normLocalY * scale;
-  const rotated = rotatePoint(injLocalX, injLocalY, b.rotation);
-  const injX = viewX + rotated.x;
-  const injY = viewY + rotated.y;
-  const phageScale = player.scale * (scale / b.scale);
-
-  const phageDraw = { x: injX, y: injY, rotation: attachPose.rotation, scale: phageScale };
-  const feetScreen = getPhageFeetPoint(phageDraw);
-  const axis = normalize({ x: viewX - feetScreen.x, y: viewY - feetScreen.y });
-  const animFrame = Math.floor(stateTime * 12) % 3;
-  drawPhageFrame(phageDraw.x, phageDraw.y, phageDraw.scale, phageDraw.rotation, animFrame);
-  const distance = Math.hypot(viewX - feetScreen.x, viewY - feetScreen.y);
-  drawInjectedDna(feetScreen, axis, injectionProgress, distance);
-  drawProgress(safeCenterX() - W * 0.19, safeBottom(34, 84), W * 0.38, 34, injectionProgress, "#f29b35");
+function getInfectionPose() {
+  const t = smoothstep(0, 0.95, stateTime);
+  const center = worldToScreen(targetBacteria.x, targetBacteria.y);
+  return { ...center, scale: targetBacteria.scale * (camera.zoom || 1), rotation: lerpAngle(infectionView.rotation, 0, t) };
 }
 
+function drawInjection() {
+  const b = targetBacteria, view = getInfectionPose();
+  const reveal = smoothstep(0.12, 0.94, injectionProgress);
+  drawBacteriaSkin(`bacteriaOutside${b.variant}`, view.x, view.y, view.scale, view.rotation);
+  ctx.save(); ctx.globalAlpha = reveal;
+  drawBacteriaSkin("bacteriaInside", view.x, view.y, view.scale, view.rotation);
+  ctx.restore();
+  const local = worldToLocal(b.x, b.y, infectionView.rotation, attachPose.x, attachPose.y);
+  const phagePos = localToWorld(view.x, view.y, view.rotation, local.x * camera.zoom, local.y * camera.zoom);
+  const phage = { ...phagePos, rotation: attachPose.rotation + view.rotation - infectionView.rotation, scale: player.scale * camera.zoom };
+  const feet = getPhageFeetPoint(phage);
+  const axis = normalize({ x: view.x - feet.x, y: view.y - feet.y });
+  const settle = smoothstep(0.7, 1, injectionProgress);
+  ctx.save(); ctx.globalAlpha = 1 - settle;
+  drawPhageFrame(phage.x, phage.y, phage.scale, phage.rotation, 0);
+  drawInjectedDna(feet, axis, injectionProgress, Math.hypot(view.x - feet.x, view.y - feet.y));
+  ctx.restore();
+  ctx.save(); ctx.globalAlpha = settle;
+  drawImageCenter(img.dnaComplete, W * 0.52, H * 0.52, 0.38, -0.35);
+  ctx.restore();
+  drawProgress(safeCenterX() - W * 0.19, safeBottom(34, 84), W * 0.38, 34, injectionProgress, "#f29b35");
+}
 function drawInjectedDna(start, dir, progress, distance) {
   const spacing = 58;
   const maxSegments = Math.max(1, Math.round(distance / spacing));
@@ -1180,7 +1386,7 @@ function drawInjectedDna(start, dir, progress, distance) {
 }
 
 function drawDnaReplication() {
-  drawImageCenter(img.bacteriaInside, W * 0.5, H * 0.52, 1.45, 0);
+  drawCellInterior();
   for (const dna of replication.dnaPieces) {
     if (dna.processed) {
       ctx.save();
@@ -1188,22 +1394,14 @@ function drawDnaReplication() {
       drawImageCenter(img.dnaComplete, dna.x, dna.y, dna.scale, dna.rotation);
       ctx.restore();
     } else {
-      drawImageCenter(img.dnaComplete, dna.x, dna.y, dna.scale, dna.rotation);
       const canDuplicate = replication.dnaPieces.length < TARGET_DNA && !dna.duplicated;
       const canProcess = replication.dnaPieces.length >= TARGET_DNA;
-      if (canDuplicate || canProcess) {
-        ctx.strokeStyle = canProcess ? "rgba(255, 225, 100, 0.75)" : "rgba(150, 238, 255, 0.58)";
-        ctx.lineWidth = 4;
-        ctx.beginPath();
-        ctx.arc(dna.x, dna.y, 62, 0, Math.PI * 2);
-        ctx.stroke();
-      }
+      if (canDuplicate || canProcess) drawSilhouetteGlow("dnaComplete", dna.x, dna.y, dna.scale, dna.rotation);
+      drawImageCenter(img.dnaComplete, dna.x, dna.y, dna.scale, dna.rotation);
+
     }
   }
-  assembly.completePhages.forEach((p, idx) => {
-    const idleFrame = [0, 2][Math.floor((stateTime * 4.5 + idx * 0.7) % 2)];
-    drawPhageFrame(p.x, p.y, 0.19, p.rotation, idleFrame);
-  });
+  drawConstructedPhages();
   const processed = replication.dnaPieces.filter(d => d.processed).length;
   drawCycleStatsSide(processed);
   if (replication.dnaPieces.length < TARGET_DNA) {
@@ -1217,10 +1415,11 @@ function drawDnaReplication() {
 function drawNucleotideMinigame() {
   const layout = getNucleotideLayout();
   syncNucleotideLayout(layout);
-  drawImageCenter(img.bacteriaInside, W * 0.5, H * 0.52, 1.45, 0);
+  drawCellInterior();
   for (const dna of replication.dnaPieces) {
     if (!dna.processed) drawImageCenter(img.dnaComplete, dna.x, dna.y, dna.scale * 0.85, dna.rotation);
   }
+  drawConstructedPhages();
   ctx.fillStyle = "rgba(3, 17, 27, 0.58)";
   ctx.fillRect(0, 0, W, H);
   drawPanel(layout.panelX, layout.panelY, layout.panelW, layout.panelH, 0.72);
@@ -1237,22 +1436,18 @@ function drawNucleotideMinigame() {
   drawPanel(layout.trayX, layout.trayY, layout.trayW, layout.trayH, 0.5);
   drawTextCentered("Nucleotidos", safeCenterX(), layout.trayTitleY, layout.trayTitleSize, "#fff", "900");
   for (const n of nucleotideGame.nucleotides) drawImageCenter(getNucleotideImage(n.code), n.x, n.y, layout.nucleotideScale, n.dragging ? 0.12 : 0);
-  if (nucleotideGame.messageTimer > 0) drawToast(nucleotideGame.message);
+  if (nucleotideGame.messageTimer > 0) drawToast(nucleotideGame.message, layout.trayY - 96);
 }
 
 function getNucleotideLayout() {
-  const topReserved = mobileControls ? 108 : 150;
+  const topReserved = 162;
   const bottomReserved = mobileControls ? 18 : 24;
   const availableTop = safeY(topReserved);
   const availableBottom = safeBottom(0, bottomReserved);
   const availableHeight = Math.max(300, availableBottom - availableTop);
   const compact = availableHeight < 560;
-  const panelW = mobileControls
-    ? clamp(viewportSafe.width - 390, 520, 620)
-    : clamp(viewportSafe.width - 460, 760, 920);
-  const panelX = mobileControls
-    ? clamp(safeCenterX() - panelW / 2, safeX(238), safeRight(panelW, SAFE_MARGIN))
-    : safeCenterX() - panelW / 2;
+  const panelW = 920;
+  const panelX = safeCenterX() - panelW / 2;
   const panelY = availableTop;
   const panelH = availableHeight;
   const titleY = panelY + (compact ? 40 : 58);
@@ -1315,28 +1510,28 @@ function syncNucleotideLayout(layout = getNucleotideLayout()) {
 }
 
 function drawPartAssembly() {
-  drawImageCenter(img.bacteriaInside, W * 0.5, H * 0.52, 1.45, 0);
+  drawCellInterior();
+  ctx.save();
+  ctx.globalAlpha = 0.16;
   for (const dna of replication.dnaPieces) {
     if (!dna.processed) drawImageCenter(img.dnaComplete, dna.x, dna.y, dna.scale * 0.8, dna.rotation);
   }
-  assembly.completePhages.forEach((p, idx) => {
-    p.x += p.vx * 0.002;
-    p.y += p.vy * 0.002;
-    keepInsideBacteria(p, 60);
-    const idleFrame = [0, 2][Math.floor((stateTime * 4.5 + idx * 0.7) % 2)];
-    drawPhageFrame(p.x, p.y, 0.19, p.rotation, idleFrame);
-  });
+  ctx.restore();
+  drawConstructedPhages();
   for (const part of assembly.activeParts) drawPart(part);
-  drawTextCentered("Junta cabeza + cuerpo + patas", safeCenterX(), safeY(150), 38, "#fff", "900");
+  const instruction = !assembly.packed ? "1. Guarda el ADN dentro de la cabeza"
+    : !assembly.joining.headBody ? "2. Une la cabeza con la cola" : "3. Añade las fibras para terminar";
+  drawTextCentered(instruction, safeCenterX(), safeY(190), 34, "#fff", "900");
+  drawTextCentered("Las proteínas forman las piezas; el ADN lleva las instrucciones.", safeCenterX(), safeBottom(0, 48), 25, "#d7f5ff");
   drawCycleStatsSide(replication.dnaPieces.filter(d => d.processed).length);
-  if (assembly.messageTimer > 0) drawToast(assembly.message);
+  if (assembly.messageTimer > 0) drawToast(assembly.message, safeBottom(72, 108));
 }
 
 function drawCycleStatsSide(processedDna) {
   const panelW = 178;
   const panelH = 146;
   const x = safeRight(panelW, SAFE_MARGIN + 18);
-  const y = safeY(164);
+  const y = safeY(gameMode === GameMode.HARD ? 244 : 164);
   drawPanel(x, y, panelW, panelH, 0.5);
   drawImageCenter(img.dnaIcon, x + 44, y + 48, 0.4, 0);
   drawText(`${replication.dnaPieces.length}/${TARGET_DNA}`, x + 82, y + 57, 26, "#fff", "900");
@@ -1348,43 +1543,65 @@ function drawCycleStatsSide(processedDna) {
 }
 
 function drawPart(part) {
-  const image = part.kind === "head" ? img.head : part.kind === "body" ? img.body : img.legs;
-  const scale = part.kind === "legs" ? 0.168 : part.kind === "body" ? 0.216 : 0.24;
-  const pulse = 0.45 + Math.sin(stateTime * 5) * 0.25;
-  ctx.save();
-  ctx.strokeStyle = `rgba(255, 232, 105, ${pulse})`;
-  ctx.lineWidth = 5;
-  ctx.beginPath();
-  ctx.ellipse(part.x, part.y, image.width * scale * 0.48 + 10, image.height * scale * 0.45 + 10, 0, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.restore();
+  const image = part.kind === "genome" ? img.dnaComplete : part.kind === "head" ? img.head : part.kind === "body" ? img.body : img.legs;
+  const scale = part.kind === "genome" ? 0.3 : part.kind === "legs" ? 0.168 : part.kind === "body" ? 0.216 : 0.24;
+  const hint = getAssemblyHint();
+  const highlight = dragItem?.kind === hint.source ? part.kind === hint.target : !dragItem && part.kind === hint.source;
+  if (highlight) drawSilhouetteGlow(part.kind === "genome" ? "dnaComplete" : part.kind, part.x, part.y, scale, part.dragging ? 0.12 : 0);
   drawImageCenter(image, part.x, part.y, scale, part.dragging ? 0.12 : 0);
+  if (part.kind === "head" && assembly.packed) drawImageCenter(img.dnaComplete, part.x, part.y, 0.12, 0);
+  if (!assembly.joining.headBody) {
+    const label = { head: "Cabeza", body: "Cola", legs: "Fibras", genome: "ADN" }[part.kind];
+    drawTextCentered(label, part.x, part.y + 76, 22, "#fff");
+  }
+}
+
+function drawBiosynthesis() {
+  drawCellInterior();
+  drawConstructedPhages();
+  drawTextCentered("La bacteria se convierte en una fábrica", W / 2, 210, 36, "#fff", "900");
+  drawTextCentered("El ADN aporta instrucciones. La maquinaria celular fabrica proteínas.", W / 2, 260, 25, "#d7f5ff");
+  ctx.save(); ctx.translate((W - 1600) / 2, 0);
+  drawImageCenter(img.dnaComplete, 450, 465, 0.45, -0.1);
+  drawTextCentered("Instrucciones", 450, 580, 25, "#ffdf7d");
+  drawPanel(650, 370, 230, 200, 0.7);
+  drawTextCentered("Maquinaria", 765, 440, 29, "#9be8ff");
+  drawTextCentered("de la bacteria", 765, 480, 26, "#fff");
+  for (let i = 0; i < 7; i++) {
+    const t = (stateTime * 0.6 + i / 7) % 1;
+    ctx.fillStyle = "#ffdf7d"; ctx.beginPath(); ctx.arc(540 + t * 110, 460 + Math.sin(t * Math.PI * 2) * 14, 5, 0, Math.PI * 2); ctx.fill();
+  }
+  [img.head, img.body, img.legs].forEach((image, i) => {
+    const t = smoothstep(i * 0.6, i * 0.6 + 0.8, stateTime);
+    ctx.save(); ctx.globalAlpha = t;
+    drawImageCenter(image, 990 + i * 100, 465 - Math.sin(t * Math.PI) * 50, 0.2 * t, 0); ctx.restore();
+  });
+  drawTextCentered("Piezas de proteína", 1090, 580, 25, "#9be8ff");
+  drawProgress(550, 690, 500, 24, stateTime / 3, "#62d6bf");
+  ctx.restore();
 }
 
 function drawLysis() {
-  const shake = lysis.burst ? 0 : lysis.pressure * 18;
-  const bx = W * 0.5 + rand(-shake, shake);
-  const by = H * 0.49 + rand(-shake, shake);
-  let image = img.bacteriaOutside1;
-  if (lysis.pressure > 0.2) image = img.bacteriaOutside2;
-  if (lysis.pressure > 0.4) image = img.bacteriaOutside3;
-  if (lysis.pressure > 0.6) image = img.bacteriaOutside4;
-  if (lysis.pressure > 0.8) image = img.bacteriaOutside5;
-  if (lysis.pressure > 0.95) image = img.bacteriaOutside6;
   if (!lysis.burst) {
-    drawImageCenter(image, bx, by, 1.08, -0.02);
-    for (let i = 0; i < LYSIS_PHAGE_LAYOUT.length; i += 1) {
-      const layout = LYSIS_PHAGE_LAYOUT[i];
-      const animFrame = Math.floor(stateTime * 15 + i) % 3;
-      drawPhageFrame(W * 0.5 + layout.x, H * 0.52 + layout.y, 0.18, layout.rotation + Math.sin(stateTime * 3 + i) * 0.08, animFrame);
+    if (lysis.damageProgress < 0.12) drawCellInterior();
+    const damage = getLysisAppearance();
+    ctx.save(); ctx.globalAlpha = smoothstep(0, 0.12, lysis.damageProgress);
+    drawBacteriaSkin(`bacteriaOutside${damage.stage}`, W / 2, H * 0.52, INTERIOR_SCALE, 0);
+    if (damage.blend > 0) {
+      ctx.globalAlpha *= damage.blend;
+      drawBacteriaSkin(`bacteriaOutside${damage.stage + 1}`, W / 2, H * 0.52, INTERIOR_SCALE, 0);
     }
+    ctx.restore();
+    LYSIS_PHAGE_LAYOUT.forEach((layout, i) => {
+      const from = assembly.completePhages[i] || { x: W * 0.5 + layout.x, y: H * 0.52 + layout.y, rotation: layout.rotation };
+      const t = smoothstep(0, 0.65, stateTime);
+      drawPhageFrame(lerp(from.x, W * 0.5 + layout.x, t), lerp(from.y, H * 0.52 + layout.y, t), lerp(0.19, 0.18, t), lerpAngle(from.rotation, layout.rotation, t), 0);
+    });
   } else {
-    drawImageCenter(img.bacteriaOutside6, bx, by, 1.16, -0.02);
-    for (const p of lysis.released) {
-      const animFrame = Math.floor(stateTime * 12 + p.x) % 3;
-      drawPhageFrame(p.x, p.y, 0.18, p.rotation, animFrame);
-    }
+    drawBacteriaSkin("bacteriaOutside6", W * 0.5, H * 0.52, INTERIOR_SCALE, 0);
+    for (const p of lysis.released) drawPhageFrame(p.x, p.y, 0.18, p.rotation, Math.floor(worldTime * 12) % 3);
   }
+  if (lysis.burst) return;
   const panelW = 330;
   const panelX = safeRight(panelW, SAFE_MARGIN + 24);
   const panelY = safeY(180);
@@ -1419,7 +1636,15 @@ function drawComplete() {
 
 function drawHud() {
   const [name, stage, objective] = stageInfo[state];
-  const objectiveText = mobileControls ? objective.replaceAll("ESPACIO", "el boton") : objective;
+  let instruction = objective;
+  if (state === State.SEARCH) instruction = "Acércate a una bacteria brillante y pulsa Infectar.";
+  if (state === State.SEARCH && mobileControls) instruction = attachCandidate
+    ? "Pulsa Infectar para posarte en la bacteria."
+    : "Toca y desliza para moverte. Busca una bacteria brillante.";
+  if (state === State.ADSORPTION && attachTimer < DOCK_SECONDS) instruction = "El fago se está posando sobre la bacteria…";
+  if (state === State.PART_ASSEMBLY) instruction = "Guarda el ADN y ensambla las piezas.";
+  if (state === State.LYSIS) instruction = "¡Pulsa muchas veces! La barra no retrocede.";
+  const objectiveText = mobileControls ? instruction.replaceAll("ESPACIO", "el boton") : instruction;
   const objectiveX = safeX(SAFE_MARGIN);
   const objectiveY = safeY(SAFE_MARGIN);
   drawPanel(objectiveX, objectiveY, 340, 132, 0.48);
@@ -1427,23 +1652,25 @@ function drawHud() {
   wrapTextCentered(objectiveText, objectiveX + 170, objectiveY + 75, 260, 22, "#fff");
   drawStageIcons(stage, name);
   if (gameMode === GameMode.HARD) drawHardModeHud();
-  if (state === State.DNA_REPLICATION || 
-      state === State.NUCLEOTIDE_MINIGAME || 
-      state === State.PART_ASSEMBLY || 
-      state === State.LYSIS) {
-    drawInfectionTimer();
+  if (state === State.SEARCH) drawBubbleCounter();
+  if (state === State.SEARCH && !attachCandidate) {
+    const nearest = bacteriaField.filter(isBacteriaInteractable).reduce((best, b) => !best || Math.hypot(b.x - player.x, b.y - player.y) < Math.hypot(best.x - player.x, best.y - player.y) ? b : best, null);
+    if (nearest) {
+      const y = safeBottom(0, 48);
+      drawPanel(safeCenterX() - 175, y - 44, 350, 70, 0.5);
+      drawTextCentered("Bacteria compatible", safeCenterX() - 24, y, 25, "#bff3b0");
+      drawImageCenter(img.arrow, safeCenterX() + 139, y - 10, 0.26, Math.atan2(nearest.y - player.y, nearest.x - player.x));
+    }
   }
   if (toastTimer > 0) drawTopToast(toastMessage);
-  drawEscapeButton();
 
   if (state === State.SEARCH && attachCandidate) {
-    drawActionPrompt(mobileControls ? "Manten el boton para infectar" : "Manten ESPACIO para infectar");
+    drawActionPrompt(mobileControls ? "Pulsa Infectar para acercarte" : "Pulsa ESPACIO para acercarte");
   } else if (state === State.ADSORPTION) {
     drawActionPrompt(mobileControls ? "Manten el boton para inyectar" : "Manten ESPACIO para inyectar");
   }
   if (state === State.SEARCH && !mobileControls) drawDesktopMovementCard();
   if (mobileControls) {
-    drawFullscreenButton();
     drawMobileControls();
   }
 }
@@ -1452,33 +1679,11 @@ function drawHardModeHud() {
   const remaining = Math.max(0, HARD_MODE_DURATION_MS - (performance.now() - hardModeStartedAt));
   const seconds = Math.ceil(remaining / 1000);
   const minutesText = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
-  const x = safeRight(310, mobileControls ? 96 : SAFE_MARGIN);
-  const y = safeY(SAFE_MARGIN);
+  const x = safeRight(310, SAFE_MARGIN);
+  const y = safeY(120);
   drawPanel(x, y, 310, 96, 0.52);
   drawTextCentered(`Puntos: ${score}`, x + 155, y + 38, 24, "#ffdd69", "900");
   drawTextCentered(`Tiempo: ${minutesText}`, x + 155, y + 72, 24, "#fff", "900");
-}
-
-function drawInfectionTimer() {
-  if (infectionTimer <= 0 || lysis.burst) return;
-  
-  const width = 240;
-  const height = 76;
-  const x = safeRight(width, mobileControls ? 96 : SAFE_MARGIN);
-  const isHard = gameMode === GameMode.HARD;
-  const y = isHard ? safeY(SAFE_MARGIN) + 110 : safeY(SAFE_MARGIN);
-  
-  drawPanel(x, y, width, height, 0.6);
-  
-  let timeColor = "#62e49c"; // green
-  if (infectionTimer < 10) {
-    timeColor = "#ff6b6b"; // red
-  } else if (infectionTimer < 20) {
-    timeColor = "#ffd56a"; // yellow
-  }
-  
-  const text = `Lisis: ${Math.ceil(infectionTimer)}s`;
-  drawTextCentered(text, x + width / 2, y + 46, 24, timeColor, "900");
 }
 
 function drawStageIcons(activeStage, stageName) {
@@ -1530,38 +1735,6 @@ function drawActionPrompt(text) {
   drawTextCentered(text, x + w / 2, y + 43, 26, "#ffdd69", "900");
 }
 
-function drawEscapeButton() {
-  if (state === State.INTRO || !mobileControls) return;
-  const w = 128;
-  const h = 52;
-  const x = safeRight(w, 96);
-  const y = safeY(92);
-  drawPanel(x, y, w, h, 0.58);
-  drawTextCentered("Menu", x + w / 2, y + 34, 23, "#fff", "900");
-  registerUiButton("escape", x, y, w, h, () => resetGame());
-}
-
-function drawFullscreenButton() {
-  const size = 58;
-  const x = safeRight(size, SAFE_MARGIN);
-  const y = safeY(SAFE_MARGIN);
-  drawPanel(x, y, size, size, 0.58);
-  ctx.save();
-  ctx.strokeStyle = "#ffffff";
-  ctx.lineWidth = 4;
-  const pad = 16;
-  ctx.beginPath();
-  ctx.moveTo(x + pad, y + 25);
-  ctx.lineTo(x + pad, y + pad);
-  ctx.lineTo(x + 25, y + pad);
-  ctx.moveTo(x + size - pad, y + 33);
-  ctx.lineTo(x + size - pad, y + size - pad);
-  ctx.lineTo(x + 33, y + size - pad);
-  ctx.stroke();
-  ctx.restore();
-  registerUiButton("fullscreen", x, y, size, size, () => toggleFullscreen());
-}
-
 function drawDesktopMovementCard() {
   const w = 236;
   const h = 184;
@@ -1592,41 +1765,17 @@ function drawArrowIcon(x, y, alphaBoost, rotation) {
 }
 
 function drawMobileControls() {
-  if (state === State.SEARCH) drawMobileJoystick();
   const label = getMobileActionLabel();
   if (label) drawMobileActionButton(label);
 }
 
-function drawMobileJoystick() {
-  const joy = touchControls.joystick;
-  joy.cx = safeRight(0, 126);
-  joy.cy = safeBottom(0, 126);
-  const knobX = joy.cx + joy.dx;
-  const knobY = joy.cy + joy.dy;
-  ctx.save();
-  ctx.globalAlpha = 0.82;
-  ctx.fillStyle = "rgba(5, 24, 38, 0.56)";
-  ctx.strokeStyle = "rgba(217, 248, 255, 0.58)";
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.arc(joy.cx, joy.cy, joy.radius, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
-  ctx.fillStyle = "rgba(142, 234, 255, 0.32)";
-  ctx.beginPath();
-  ctx.arc(knobX, knobY, 34, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
-  ctx.restore();
-}
-
 function drawMobileActionButton(label) {
-  const w = 190;
-  const h = 74;
+  const w = 250;
+  const h = 112;
   const x = safeX(SAFE_MARGIN);
   const y = safeBottom(h, SAFE_MARGIN);
   drawPanel(x, y, w, h, touchControls.actionDown ? 0.78 : 0.58);
-  drawTextCentered(label, x + w / 2, y + 46, 24, "#ffdd69", "900");
+  drawTextCentered(label, x + w / 2, y + 67, 30, "#ffdd69", "900");
   registerUiButton("action", x, y, w, h, () => {
     touchControls.actionDown = true;
   });
@@ -1639,14 +1788,14 @@ function getMobileActionLabel() {
   return "";
 }
 
-function drawToast(text) {
+function drawToast(text, y = safeY(170)) {
   const x = safeCenterX() - 300;
-  const y = safeY(170);
   drawPanel(x, y, 600, 72, 0.72);
-  drawText(text, x + 34, y + 48, 27, "#fff", "900");
+  wrapTextCentered(text, x + 300, y + 30, 550, 24, "#fff");
 }
 
 function getPlayerFrameIndex() {
+  if (state === State.ADSORPTION || state === State.INJECTION) return 0;
   if (player.collisionTimer > 0) {
     return 3;
   }
@@ -1859,11 +2008,154 @@ function keepInsideBacteria(obj, radius = 55) {
 }
 
 function canAttachToBacteria(phage, bacteria) {
-  const points = getPhageContactScores(phage, bacteria);
-  const others = [points.top.distance, points.left.distance, points.right.distance];
-  const bottomDominates = points.bottom.distance <= Math.min(...others) + 28;
-  const colliding = points.bottom.value < 1.22 || points.top.value < 1 || points.left.value < 1 || points.right.value < 1;
-  return { valid: colliding && bottomDominates, near: colliding, feet: points.bottom.world };
+  if (Math.hypot(phage.x - bacteria.x, phage.y - bacteria.y) > Math.max(bacteria.rx, bacteria.ry) + INFECTION_REACH) return { valid: false, distance: Infinity };
+  const contact = closestBacteriaSurface(phage, bacteria);
+  return { valid: contact.distance <= INFECTION_REACH, distance: contact.distance };
+}
+
+function clearBubbleEnergy() {
+  bubbleStats.combo = 0; bubbleStats.cooldown = 0; bubbleStats.energy = 0;
+}
+
+function registerBubblePop() {
+  bubbleStats.total++;
+  bubbleStats.combo = bubbleStats.cooldown > 0 ? Math.min(10, bubbleStats.combo + 1) : 1;
+  bubbleStats.cooldown = BUBBLE_COMBO_WINDOW;
+  if (bubbleStats.energy > 0 || bubbleStats.combo >= 10) bubbleStats.energy = ENERGY_SECONDS;
+}
+
+function updateBubbleEnergy(dt) {
+  if (state !== State.SEARCH) return;
+  bubbleStats.cooldown = Math.max(0, bubbleStats.cooldown - dt);
+  bubbleStats.energy = Math.max(0, bubbleStats.energy - dt);
+  if (bubbleStats.cooldown === 0 && bubbleStats.energy === 0) bubbleStats.combo = 0;
+}
+
+function drawBubbleCounter() {
+  const x = safeX(36), y = safeY(196);
+  ctx.drawImage(glowSprites.bubble, x, y - 29, 34, 34);
+  drawText(String(bubbleStats.total), x + 47, y, 32, "#d8fbff", "900");
+  const active = bubbleStats.energy > 0;
+  const text = active ? `¡SUPERENERGÍA! ${Math.ceil(bubbleStats.energy)}s` : `Racha ${bubbleStats.combo}/10`;
+  drawText(text, x, y + 39, 23, active ? "#9bffee" : "#d8fbff", "800");
+  if (active || bubbleStats.cooldown > 0) {
+    ctx.fillStyle = "#8fffe7";
+    ctx.fillRect(x, y + 54, 190 * (active ? bubbleStats.energy / ENERGY_SECONDS : bubbleStats.cooldown / BUBBLE_COMBO_WINDOW), 4);
+  }
+}
+
+function drawEnergyEffect() {
+  ctx.save();
+  ctx.globalAlpha = Math.min(1, bubbleStats.energy) * (0.8 + 0.12 * Math.sin(worldTime * 3));
+  ctx.drawImage(layers.energyVignette, 0, 0, W, H);
+  ctx.strokeStyle = "rgba(152, 255, 235, 0.4)"; ctx.lineWidth = 2;
+  for (let i = 0; i < 8; i++) {
+    const y = (worldTime * 190 + i * H / 8) % H;
+    const x = i % 2 ? W - 25 : 25;
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + (i % 2 ? -17 : 17), y - 35); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function buildSilhouetteGlows() {
+  for (const key of ["head", "body", "legs", "dnaComplete", "bacteriaOutside1"]) {
+    const source = img[key], ratio = Math.min(1, 384 / Math.max(source.width, source.height));
+    const mask = createLayer(Math.ceil(source.width * ratio), Math.ceil(source.height * ratio));
+    const m = mask.getContext("2d"); m.drawImage(source, 0, 0, mask.width, mask.height);
+    m.globalCompositeOperation = "source-in"; m.fillStyle = "#ffe998"; m.fillRect(0, 0, mask.width, mask.height);
+    const glow = createLayer(mask.width + 80, mask.height + 80), c = glow.getContext("2d");
+    c.shadowColor = "#ffd95a"; c.shadowBlur = 16;
+    for (const offset of [-3, 0, 3]) c.drawImage(mask, 40 + offset, 40);
+    silhouetteGlows[key] = { image: glow, ratio: source.width / mask.width };
+  }
+  layers.energyVignette = createLayer(320, 180);
+  const c = layers.energyVignette.getContext("2d");
+  const g = c.createRadialGradient(160, 90, 40, 160, 90, 180);
+  g.addColorStop(0, "rgba(88,255,219,0)"); g.addColorStop(0.6, "rgba(88,255,219,0.015)"); g.addColorStop(1, "rgba(88,255,219,0.3)");
+  c.fillStyle = g; c.fillRect(0, 0, 320, 180);
+}
+
+function drawSilhouetteGlow(key, x, y, scale, rotation = 0, strength = 1) {
+  const glow = silhouetteGlows[key];
+  ctx.save();
+  ctx.globalAlpha = strength * (0.35 + 0.5 * ((Math.cos(worldTime * 4) + 1) / 2) ** 2);
+  drawImageCenter(glow.image, x, y, scale * glow.ratio, rotation);
+  ctx.restore();
+}
+
+function getAssemblyHint() {
+  if (!assembly.packed) return { source: "genome", target: "head" };
+  if (!assembly.joining.headBody) return { source: "head", target: "body" };
+  return { source: "legs", target: "body" };
+}
+
+function updateConstructedPhages(dt) {
+  const phages = assembly.completePhages;
+  phages.forEach((p, i) => {
+    const angle = worldTime * 0.22 + i * Math.PI * 2 / TARGET_PHAGES;
+    const target = { x: W / 2 + Math.cos(angle) * 320, y: H * 0.52 + Math.sin(angle) * 125 };
+    const v = normalize({ x: target.x - p.x, y: target.y - p.y });
+    const mix = 1 - Math.exp(-dt * 1.6);
+    p.vx = lerp(p.vx, v.x * 65, mix); p.vy = lerp(p.vy, v.y * 65, mix);
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    if (Math.hypot(p.vx, p.vy) > 1) p.rotation = lerpAngle(p.rotation, Math.atan2(p.vx, -p.vy), mix);
+  });
+  for (let i = 0; i < phages.length; i++) for (let j = i + 1; j < phages.length; j++) {
+    const a = phages[i], b = phages[j];
+    const dx = b.x - a.x, dy = b.y - a.y, distance = Math.hypot(dx, dy);
+    if (distance < 85) {
+      const n = distance > 0.001 ? { x: dx / distance, y: dy / distance } : { x: Math.cos(j), y: Math.sin(j) };
+      const push = (85 - distance) * 0.5;
+      a.x -= n.x * push; a.y -= n.y * push; b.x += n.x * push; b.y += n.y * push;
+    }
+  }
+  for (const p of phages) {
+    const dx = p.x - W / 2, dy = p.y - H * 0.52, value = Math.hypot(dx / 410, dy / 155);
+    if (value > 1) { p.x = W / 2 + dx / value; p.y = H * 0.52 + dy / value; }
+  }
+}
+
+function drawConstructedPhages() {
+  assembly.completePhages.forEach((p, i) => drawPhageFrame(p.x, p.y, 0.19, p.rotation, Math.floor((worldTime + i * 0.2) * 9) % 3));
+}
+
+function getLysisAppearance() {
+  const progress = Math.min(4.9999, lysis.damageProgress * 5);
+  const stage = 1 + Math.floor(progress);
+  return { stage, blend: stage < 5 ? progress % 1 : 0 };
+}
+
+function closestBacteriaSurface(phage, bacteria) {
+  const p = worldToLocal(bacteria.x, bacteria.y, bacteria.rotation, phage.x, phage.y);
+  // Coarse global search plus local refinement avoids unstable ellipse projection
+  // when the phage approaches either narrow end of a rotated bacterium.
+  const distanceAt = a => (bacteria.rx * Math.cos(a) - p.x) ** 2 + (bacteria.ry * Math.sin(a) - p.y) ** 2;
+  let angle = 0;
+  let best = Infinity;
+  const step = Math.PI * 2 / 32;
+  for (let i = 0; i < 32; i++) {
+    const d = distanceAt(i * step);
+    if (d < best) { best = d; angle = i * step; }
+  }
+  let lo = angle - step, hi = angle + step;
+  for (let i = 0; i < 14; i++) {
+    const a = lo + (hi - lo) / 3, b = hi - (hi - lo) / 3;
+    if (distanceAt(a) < distanceAt(b)) hi = b;
+    else lo = a;
+  }
+  angle = (lo + hi) / 2;
+  const local = { x: bacteria.rx * Math.cos(angle), y: bacteria.ry * Math.sin(angle) };
+  const world = localToWorld(bacteria.x, bacteria.y, bacteria.rotation, local.x, local.y);
+  const normal = rotatePoint(local.x / (bacteria.rx * bacteria.rx), local.y / (bacteria.ry * bacteria.ry), bacteria.rotation);
+  const inside = (p.x / bacteria.rx) ** 2 + (p.y / bacteria.ry) ** 2 < 1;
+  return { ...world, normal: normalize(normal), distance: inside ? 0 : Math.hypot(world.x - phage.x, world.y - phage.y) };
+}
+
+function getDockPose(phage, bacteria) {
+  const surface = closestBacteriaSurface(phage, bacteria);
+  const rotation = Math.atan2(surface.normal.x, -surface.normal.y);
+  const feetOffset = rotatePoint(0, 168 * phage.scale, rotation);
+  return { x: surface.x - feetOffset.x, y: surface.y - feetOffset.y, rotation, feet: { x: surface.x, y: surface.y }, bacteria };
 }
 
 function getPhageContactScores(phage, bacteria) {
@@ -1950,18 +2242,9 @@ function seeded(seed) {
   return x - Math.floor(x);
 }
 
-function updateBubbles(dt) {
-  for (const bubble of bubbles) {
-    bubble.y -= bubble.speed * dt;
-    if (bubble.y < -30) {
-      bubble.y = H + 30;
-      bubble.x = rand(0, W);
-    }
-  }
-}
-
 function spawnParticle(x, y, color, count) {
-  if (particles.length > QUALITY.particlesMax) particles.splice(0, particles.length - QUALITY.particlesMax);
+  count = Math.min(count, QUALITY.particlesMax);
+  if (particles.length + count > QUALITY.particlesMax) particles.splice(0, particles.length + count - QUALITY.particlesMax);
   for (let i = 0; i < count; i += 1) {
     particles.push({
       x,
@@ -2014,7 +2297,7 @@ function hit(point, x, y, radius) {
 
 function getCanvasTransform() {
   const rect = canvas.getBoundingClientRect();
-  const scale = Math.max(rect.width / W, rect.height / H);
+  const scale = Math.min(rect.width / W, rect.height / H);
   const drawW = W * scale;
   const drawH = H * scale;
   return {
@@ -2033,38 +2316,55 @@ function screenToCanvas(ev) {
   };
 }
 
+function requiresFullscreen() {
+  const root = document.documentElement;
+  const supported = Boolean(root?.requestFullscreen || root?.webkitRequestFullscreen);
+  return mobileControls && supported && !document.fullscreenElement && !document.webkitFullscreenElement;
+}
+
+function isDisplayBlocked() {
+  return !landscapeReady || requiresFullscreen();
+}
+
 function resizeCanvasToViewport() {
-  const scale = Math.max(window.innerWidth / W, window.innerHeight / H);
-  const drawW = W * scale;
-  const drawH = H * scale;
-  canvas.style.width = `${drawW}px`;
-  canvas.style.height = `${drawH}px`;
-  canvas.style.left = `${(window.innerWidth - drawW) / 2}px`;
-  canvas.style.top = `${(window.innerHeight - drawH) / 2}px`;
+  const previousW = W;
+  landscapeReady = window.innerWidth >= window.innerHeight;
   mobileControls = isMobileControls();
+  if (landscapeReady) W = Math.round(H * window.innerWidth / window.innerHeight);
+  const shift = (W - previousW) / 2;
+  if (shift && player) {
+    camera.x -= shift / (camera.zoom || 1);
+    if (infectionView) infectionView.camera.x -= shift / (infectionView.camera.zoom || 1);
+    if (escape) escape.camera.x -= shift / (escape.camera.zoom || 1);
+    for (const list of [replication.dnaPieces, assembly.activeParts, assembly.completePhages]) for (const item of list) {
+      item.x += shift; if (item.ox !== undefined) item.ox += shift;
+    }
+    if (state === State.LYSIS) for (const p of lysis.released) p.x += shift;
+    clearHeldInputs();
+  }
+  canvas.width = W; canvas.height = H;
+  canvas.style.width = `${window.innerWidth}px`; canvas.style.height = `${window.innerHeight}px`;
+  playfield.style.width = `${window.innerWidth}px`; playfield.style.height = `${window.innerHeight}px`;
+  playfield.style.left = "0px"; playfield.style.top = "0px";
+  canvas.style.left = "0px"; canvas.style.top = "0px";
+  if (shift && img.noise) {
+    layers.backgroundStatic = createLayer(); buildStaticBackgroundLayer(); backgroundFields.length = 0;
+  }
+  const blocked = isDisplayBlocked();
+  rotateNotice.classList.toggle("hidden", !blocked);
+  document.getElementById("orientationTitle").textContent = landscapeReady ? "Pantalla completa" : "Gira tu pantalla";
+  document.getElementById("orientationMessage").textContent = landscapeReady
+    ? "Toca el botón para jugar a pantalla completa. Tu partida te espera."
+    : "Phage-Go! se juega en horizontal. Gira tu dispositivo y activa pantalla completa.";
+  fullscreenButton.ariaLabel = document.fullscreenElement || document.webkitFullscreenElement ? "Salir de pantalla completa" : "Pantalla completa";
+  if (blocked) {
+    clearHeldInputs(); if (pausedAt === null) pausedAt = performance.now();
+  }
   updateViewportSafeArea();
 }
 
 function updateViewportSafeArea() {
-  const t = getCanvasTransform();
-  const visibleLeftPx = Math.max(0, -t.rect.left);
-  const visibleTopPx = Math.max(0, -t.rect.top);
-  const visibleRightPx = Math.min(t.rect.width, window.innerWidth - t.rect.left);
-  const visibleBottomPx = Math.min(t.rect.height, window.innerHeight - t.rect.top);
-  const left = clamp(visibleLeftPx / t.scale, 0, W);
-  const top = clamp(visibleTopPx / t.scale, 0, H);
-  const right = clamp(visibleRightPx / t.scale, 0, W);
-  const bottom = clamp(visibleBottomPx / t.scale, 0, H);
-  viewportSafe = {
-    left,
-    top,
-    right,
-    bottom,
-    width: right - left,
-    height: bottom - top,
-    cx: (left + right) * 0.5,
-    cy: (top + bottom) * 0.5,
-  };
+  viewportSafe = { left: 0, top: 0, right: W, bottom: H, width: W, height: H, cx: W / 2, cy: H / 2 };
 }
 
 function safeX(offset) {
@@ -2100,8 +2400,10 @@ function handleUiPointerDown(p, pointerId) {
     const button = uiButtons[i];
     if (p.x < button.x || p.x > button.x + button.w || p.y < button.y || p.y > button.y + button.h) continue;
     if (button.id === "action") {
+      if (touchControls.actionPointerId !== null) return true;
       touchControls.actionPointerId = pointerId;
       touchControls.actionDown = true;
+      pendingActionTaps++;
     }
     button.onClick();
     return true;
@@ -2112,12 +2414,27 @@ function handleUiPointerDown(p, pointerId) {
 function handleMobileControlPointerDown(p, pointerId) {
   if (!mobileControls || state !== State.SEARCH) return false;
   const joy = touchControls.joystick;
-  const dist = Math.hypot(p.x - joy.cx, p.y - joy.cy);
-  if (dist > joy.radius + 42) return false;
+  // The first finger owns movement until release; other fingers can use actions.
+  if (joy.active) return true;
   joy.active = true;
   joy.pointerId = pointerId;
+  joy.cx = p.x;
+  joy.cy = p.y;
   updateJoystickFromPoint(p);
   return true;
+}
+
+function releaseControlPointer(pointerId) {
+  if (touchControls.joystick.pointerId === pointerId) {
+    resetJoystick();
+    return true;
+  }
+  if (touchControls.actionPointerId === pointerId) {
+    touchControls.actionPointerId = null;
+    touchControls.actionDown = false;
+    return true;
+  }
+  return false;
 }
 
 function updateJoystickFromPoint(p) {
@@ -2196,12 +2513,40 @@ function isMobileControls() {
   return window.matchMedia("(pointer: coarse)").matches || navigator.maxTouchPoints > 0 || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
 }
 
-function toggleFullscreen() {
-  if (!document.fullscreenElement) {
-    document.documentElement.requestFullscreen?.();
-  } else {
-    document.exitFullscreen?.();
+function showDisplayNotice(message) {
+  clearTimeout(displayNoticeTimeout);
+  displayNotice.textContent = message;
+  document.getElementById("rotateStatus").textContent = message;
+  displayNotice.classList.remove("hidden");
+  displayNoticeTimeout = setTimeout(() => displayNotice.classList.add("hidden"), 4500);
+}
+
+async function toggleFullscreen() {
+  try {
+    if (document.fullscreenElement || document.webkitFullscreenElement) {
+      if (document.exitFullscreen) await document.exitFullscreen();
+      else document.webkitExitFullscreen?.();
+    } else {
+      if (document.documentElement.requestFullscreen) await document.documentElement.requestFullscreen();
+      else if (document.documentElement.webkitRequestFullscreen) document.documentElement.webkitRequestFullscreen();
+      else { showDisplayNotice("Este navegador no ofrece pantalla completa. Puedes jugar en horizontal."); return; }
+      try { await screen.orientation?.lock?.("landscape"); } catch { /* Rotate prompt remains the fallback on unsupported devices. */ }
+    }
+  } catch {
+    showDisplayNotice("No se pudo abrir pantalla completa. Gira el dispositivo para seguir jugando.");
   }
+  resizeCanvasToViewport();
+}
+
+function clearHeldInputs() {
+  keys.clear();
+  resetTouchControls();
+  pendingActionTaps = 0;
+  spaceWasDown = false;
+  mouse.down = false;
+  mouse.justDown = false;
+  mouse.justUp = false;
+  if (dragItem) { dragItem.dragging = false; dragItem = null; }
 }
 
 function rand(min, max) {
@@ -2234,8 +2579,9 @@ window.addEventListener("keydown", ev => {
     ev.preventDefault();
     return;
   }
+  if (isDisplayBlocked()) return;
+  if ((ev.key === " " || ev.key === "Spacebar") && !ev.repeat && !keys.has(key)) pendingActionTaps++;
   keys.add(key);
-  if (ev.key === " " && state === State.ADSORPTION && stateTime > 0.25) setState(State.INJECTION);
   if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " "].includes(ev.key)) ev.preventDefault();
 });
 
@@ -2245,6 +2591,7 @@ window.addEventListener("keyup", ev => {
 });
 
 canvas.addEventListener("pointerdown", ev => {
+  if (isDisplayBlocked()) return;
   const p = screenToCanvas(ev);
   if (handleUiPointerDown(p, ev.pointerId) || handleMobileControlPointerDown(p, ev.pointerId)) {
     canvas.setPointerCapture(ev.pointerId);
@@ -2270,29 +2617,38 @@ canvas.addEventListener("pointermove", ev => {
 });
 
 canvas.addEventListener("pointerup", ev => {
+  if (releaseControlPointer(ev.pointerId)) return;
   const p = screenToCanvas(ev);
-  if (touchControls.joystick.pointerId === ev.pointerId) resetJoystick();
-  if (touchControls.actionPointerId === ev.pointerId) {
-    touchControls.actionPointerId = null;
-    touchControls.actionDown = false;
-  }
   mouse.x = p.x;
   mouse.y = p.y;
   mouse.down = false;
   mouse.justUp = true;
 });
 
-canvas.addEventListener("pointercancel", () => {
-  resetTouchControls();
+canvas.addEventListener("pointercancel", ev => {
+  if (releaseControlPointer(ev.pointerId)) return;
   mouse.down = false;
-  mouse.justUp = true;
+  mouse.justDown = false;
+  mouse.justUp = false;
+  if (dragItem) { dragItem.dragging = false; dragItem = null; }
 });
+canvas.addEventListener("lostpointercapture", ev => releaseControlPointer(ev.pointerId));
 
 window.addEventListener("resize", resizeCanvasToViewport);
+window.addEventListener("blur", clearHeldInputs);
+document.addEventListener("visibilitychange", () => {
+  clearHeldInputs();
+  // Hidden tabs may stop animation frames entirely, so record the pause here.
+  if (document.hidden && pausedAt === null) pausedAt = performance.now();
+});
 document.addEventListener("fullscreenchange", resizeCanvasToViewport);
+document.addEventListener("webkitfullscreenchange", resizeCanvasToViewport);
+fullscreenButton.addEventListener("click", toggleFullscreen);
+document.getElementById("rotateFullscreenButton").addEventListener("click", toggleFullscreen);
 normalButton.addEventListener("click", () => startGame(GameMode.NORMAL));
 hardButton.addEventListener("click", () => startGame(GameMode.HARD));
 restartButton.addEventListener("click", resetGame);
+menuButton.addEventListener("click", resetGame);
 
 resizeCanvasToViewport();
 loadImages()

@@ -4,11 +4,13 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Phage-Go!</title>
+    <meta name="app-version" content="2026.10.19-9">
     <link rel="icon" href="data:,">
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=20261019-9">
   </head>
   <body>
     <main id="app">
+      <div id="playfield">
       <canvas id="game" width="1600" height="900" aria-label="Phage-Go juego del ciclo litico"></canvas>
       <div id="loading">Cargando assets...</div>
       <div id="menuButtons" class="menu-buttons">
@@ -20,7 +22,18 @@
         </button>
       </div>
       <button id="restartButton" class="text-button hidden" type="button">Reiniciar</button>
+      <button id="menuButton" class="menu-return-button hidden" type="button">Menú</button>
+      <button id="fullscreenButton" class="fullscreen-button" type="button" aria-label="Pantalla completa">⛶ <span>Pantalla completa</span></button>
+      <div id="displayNotice" class="display-notice hidden" role="status"></div>
+      </div>
+      <div id="rotateNotice" class="rotate-notice hidden" role="status">
+        <div class="rotate-icon" aria-hidden="true">↻</div>
+        <h1 id="orientationTitle">Gira tu pantalla</h1>
+        <p id="orientationMessage">Gira tu dispositivo y activa pantalla completa para jugar.</p>
+        <button id="rotateFullscreenButton" type="button">⛶ Pantalla completa</button>
+        <p id="rotateStatus" class="rotate-status" role="status"></p>
+      </div>
     </main>
-    <script src="game.js"></script>
+    <script src="game.js?v=20261019-9"></script>
   </body>
 </html>
