@@ -9,7 +9,7 @@
 - [x] Fagos construidos nadando y separados dentro de la bacteria.
 - [x] Llenar cualquier pantalla horizontal sin bandas; solicitar giro y pantalla completa en móvil.
 - [x] Verificar lógica, controles y presentación.
-- [ ] Publicar la aplicación y entregar el enlace online.
+- [x] Publicar la aplicación y entregar el enlace online.
 
 Verificación: 30 pruebas automatizadas; revisión visual en 1024×768 y 844×390, sin bandas y sin errores de consola.
 
