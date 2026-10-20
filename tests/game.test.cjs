@@ -1373,6 +1373,7 @@ test('semantic minigame controls select DNA, match letters and assemble parts wi
   assert.equal(run(`(()=>{
     startGame(GameMode.NORMAL);createInitialDnaFromInjection();setState(State.DNA_REPLICATION);render(0);
     for(let i=0;i<4;i++){semanticNodes.get('dna-'+replication.dnaPieces.find(d=>!d.duplicated).id).control.onClick();render(0);}
+    for(const dna of replication.dnaPieces) dna.minigameType='drag';
     semanticNodes.get('dna-1').control.onClick();render(0);
     if(state!==State.NUCLEOTIDE_MINIGAME) return false;
     while(state===State.NUCLEOTIDE_MINIGAME) {
@@ -1609,7 +1610,7 @@ test('tutorial drawing never moves letters or assembly pieces or generates input
 test('one success hides each repeated-element lesson and assembly advances to the next gesture', () => {
   const {run}=game();
   assert.equal(run(`(()=>{
-    startGame(GameMode.NORMAL);createInitialDnaFromInjection();setState(State.DNA_REPLICATION);
+    startGame(GameMode.NORMAL);createInitialDnaFromInjection();replication.dnaPieces[0].minigameType='drag';setState(State.DNA_REPLICATION);
     if(getTutorialCue().key!=='dna-copy')return false;
     activateDna(replication.dnaPieces[0]);
     if(getTutorialCue())return false;
@@ -1624,6 +1625,20 @@ test('one success hides each repeated-element lesson and assembly advances to th
     const genome=assembly.activeParts.find(p=>p.kind==='genome'),head=assembly.activeParts.find(p=>p.kind==='head');
     genome.x=head.x;genome.y=head.y;trySnapParts();
     return getTutorialCue().key==='assembly-head'&&visualTutorial.learned['assembly-genome'];
+  })()`),true);
+});
+
+test('sorting tutorial pointer disappears after the first letter swap', () => {
+  const {run}=game();
+  assert.equal(run(`(()=>{
+    startGame(GameMode.NORMAL);createInitialDnaFromInjection();
+    replication.dnaPieces[0].minigameType='sort';
+    nucleotideGame=createNucleotideGame(replication.dnaPieces[0]);setState(State.NUCLEOTIDE_MINIGAME);
+    if(getTutorialCue()?.key!=='nucleotide-sort')return false;
+    selectSortNucleotide(0);
+    if(getTutorialCue()?.key!=='nucleotide-sort')return false;
+    selectSortNucleotide(1);
+    return visualTutorial.learned['nucleotide-sort']===true && getTutorialCue()===null;
   })()`),true);
 });
 
@@ -1660,7 +1675,7 @@ test('every tutorial gesture stays visible on desktop and mobile, including duri
         if(lesson==='injection') { state=State.ADSORPTION;targetBacteria=makeBacteria(player.x,player.y,1,0,1); }
         if(lesson==='dna-copy') { createInitialDnaFromInjection();state=State.DNA_REPLICATION; }
         if(lesson==='dna-process') { replication.dnaPieces=Array.from({length:TARGET_DNA},(_,i)=>({id:i+1,x:500+i*20,y:450,duplicated:true,processed:false}));state=State.DNA_REPLICATION; }
-        if(lesson==='nucleotide') { createInitialDnaFromInjection();nucleotideGame=createNucleotideGame(replication.dnaPieces[0]);state=State.NUCLEOTIDE_MINIGAME; }
+        if(lesson==='nucleotide') { createInitialDnaFromInjection();replication.dnaPieces[0].minigameType='drag';nucleotideGame=createNucleotideGame(replication.dnaPieces[0]);state=State.NUCLEOTIDE_MINIGAME; }
         if(lesson.startsWith('assembly-')) {
           createPhagePartsFromDna({id:1});state=State.PART_ASSEMBLY;
           if(lesson==='assembly-head') assembly.packed=true;
@@ -1692,7 +1707,7 @@ test('repeating movement and drag demonstrations never fade completely between g
     for(let i=0;i<=384;i++) {visualTutorial.age=i/60;drawVisualTutorial();minimumAlpha=Math.min(minimumAlpha,ctx.globalAlpha);}
     if(minimumAlpha<0.71)return false;
     visualTutorial.learned={'movement-v2':true};visualTutorial.key='nucleotide';visualTutorial.age=0;
-    createInitialDnaFromInjection();nucleotideGame=createNucleotideGame(replication.dnaPieces[0]);state=State.NUCLEOTIDE_MINIGAME;
+    createInitialDnaFromInjection();replication.dnaPieces[0].minigameType='drag';nucleotideGame=createNucleotideGame(replication.dnaPieces[0]);state=State.NUCLEOTIDE_MINIGAME;
     minimumAlpha=1;
     for(let i=0;i<=192;i++) {visualTutorial.age=i/60;drawVisualTutorial();minimumAlpha=Math.min(minimumAlpha,ctx.globalAlpha);}
     return minimumAlpha>=0.71;

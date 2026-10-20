@@ -19,7 +19,7 @@ const storyIntroCaption = document.getElementById("storyIntroCaption");
 const displayNotice = document.getElementById("displayNotice");
 const retryLoadingButton = document.getElementById("retryLoadingButton");
 const loadingStatus = document.getElementById("loadingStatus");
-const BUILD_VERSION = "20261020-43";
+const BUILD_VERSION = "20261020-51";
 const STORY_INTRO_FADE_MS = 260;
 const SIMULATION_STEP = 1 / 60;
 const MAX_FRAME_SECONDS = 0.25; // Discard long stalls equally for gameplay and its clocks.
@@ -165,13 +165,7 @@ const ASSETS = {
   stage5: "assets_webp/Stage_5.webp",
 };
 
-const NUCLEOTIDE_SEQUENCES = [
-  ["A", "T", "C", "G"],
-  ["T", "A", "G", "C"],
-  ["C", "G", "A", "T"],
-  ["G", "C", "T", "A"],
-  ["A", "C", "T", "G"],
-];
+const NUCLEOTIDE_MINIGAME_TYPES = ["drag", "tap", "sort", "catch", "memory"];
 
 for (const key of WORLD_SPRITES) ASSETS[key] = `assets_webp/celulas/${key.slice(5)}.webp`;
 const img = {};
@@ -239,7 +233,7 @@ const stageInfo = {
   [State.ADSORPTION]: ["Adsorción", 1, "Mantén pulsada la bacteria para iniciar la inyección; también puedes usar ESPACIO."],
   [State.INJECTION]: ["Inyección", 2, "Mantén pulsada la bacteria o ESPACIO para inyectar el ADN."],
   [State.DNA_REPLICATION]: ["Replicación", 3, "Selecciona el ADN para duplicarlo o procesarlo."],
-  [State.NUCLEOTIDE_MINIGAME]: ["Nucleótidos", 4, "Selecciona un nucleótido y su destino, o arrástralo a su misma letra."],
+  [State.NUCLEOTIDE_MINIGAME]: ["Nucleótidos", 4, "Completa la cadena de ADN."],
   [State.BIOSYNTHESIS]: ["Fabricación", 4, "La bacteria fabrica las piezas del fago."],
   [State.PART_ASSEMBLY]: ["Ensamblaje", 5, "Selecciona una pieza y su destino, o arrastra para unirlas."],
   [State.LYSIS]: ["Lisis", 6, "Toca la pantalla o pulsa ESPACIO para liberar los fagos."],
@@ -248,15 +242,28 @@ const stageInfo = {
 const MOBILE_STAGE_OBJECTIVES = {
   [State.ADSORPTION]: "Mantén pulsada la bacteria para iniciar la inyección.",
   [State.INJECTION]: "Mantén pulsada la bacteria para inyectar el ADN.",
-  [State.NUCLEOTIDE_MINIGAME]: "Toca un nucleótido y luego el espacio de su misma letra.",
   [State.PART_ASSEMBLY]: "Toca una pieza y su destino, o arrástralas para unirlas.",
   [State.LYSIS]: "Toca varias veces para liberar los fagos.",
 };
 
 function getStageInfo(stage = state) {
   const info = stageInfo[stage];
+  if (stage === State.NUCLEOTIDE_MINIGAME) {
+    return [info[0], info[1], getNucleotideInstruction(nucleotideGame?.type, mobileControls)];
+  }
   if (!info || !mobileControls || !MOBILE_STAGE_OBJECTIVES[stage]) return info;
   return [info[0], info[1], MOBILE_STAGE_OBJECTIVES[stage]];
+}
+
+function getNucleotideInstruction(type, mobile = mobileControls) {
+  const instructions = {
+    drag: mobile ? "Arrastra cada letra a su espacio." : "Arrastra cada letra a su espacio.",
+    tap: "Pulsa la letra que aparece para completar la cadena.",
+    sort: "Intercambia las fichas hasta ordenar la cadena.",
+    catch: mobile ? "Desliza para mover la cesta y recoge las letras en orden." : "Mueve la cesta con el ratón o las flechas y recoge las letras en orden.",
+    memory: "Memoriza la secuencia de letras y repítela en el mismo orden.",
+  };
+  return instructions[type] || "Completa la cadena de ADN.";
 }
 
 canvas.width = W;
@@ -482,6 +489,7 @@ function resetCycleState(x = player?.x || 330, y = player?.y || 470, rotation = 
   replication = {
     dnaPieces: [],
     nextId: 1,
+    minigameOrder: [],
     message: "",
     messageTimer: 0,
   };
@@ -995,6 +1003,13 @@ function updateInjection(dt, spaceDown) {
 }
 
 function createInitialDnaFromInjection() {
+  const minigameOrder = shuffleValues(NUCLEOTIDE_MINIGAME_TYPES).slice(0, TARGET_DNA);
+  while (minigameOrder.length < TARGET_DNA) {
+    const previous = minigameOrder[minigameOrder.length - 1];
+    const choices = NUCLEOTIDE_MINIGAME_TYPES.filter(type => type !== previous);
+    minigameOrder.push(choose(choices.length ? choices : NUCLEOTIDE_MINIGAME_TYPES));
+  }
+  replication.minigameOrder = minigameOrder;
   replication.dnaPieces = [{
     id: replication.nextId++,
     x: W * 0.52,
@@ -1006,7 +1021,21 @@ function createInitialDnaFromInjection() {
     scale: 0.38,
     duplicated: false,
     processed: false,
+    minigameType: minigameOrder[0],
   }];
+}
+
+function shuffleValues(values) {
+  const result = [...values];
+  for (let i = result.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+  return result;
+}
+
+function choose(values) {
+  return values[Math.floor(Math.random() * values.length)];
 }
 
 function updateDnaReplication(dt) {
@@ -1048,8 +1077,9 @@ function activateDna(dna) {
 
 function spawnDnaCopy(source) {
   const angle = rand(0, Math.PI * 2);
+  const id = replication.nextId++;
   const copy = {
-    id: replication.nextId++,
+    id,
     x: clamp(source.x + Math.cos(angle) * 130, 270, W - 270),
     y: clamp(source.y + Math.sin(angle) * 100, 285, H - 250),
     vx: Math.cos(angle) * 360,
@@ -1059,6 +1089,7 @@ function spawnDnaCopy(source) {
     scale: 0.36,
     duplicated: false,
     processed: false,
+    minigameType: replication.minigameOrder[id - 1],
   };
   source.vx -= Math.cos(angle) * 260;
   source.vy -= Math.sin(angle) * 210;
@@ -1094,26 +1125,272 @@ function resolveDnaCollisions() {
 }
 
 function createNucleotideGame(dna) {
-  const sequence = NUCLEOTIDE_SEQUENCES[(dna.id - 1) % NUCLEOTIDE_SEQUENCES.length];
+  const sequence = shuffleValues(["A", "T", "C", "G"]);
+  const type = dna.minigameType || "drag";
+  const itemCodes = type === "sort"
+    ? shuffleValuesWithNoMatches(sequence)
+    : shuffleValues(["A", "T", "C", "G"]);
   return {
     dna,
     sequence,
+    type,
+    progress: 0,
     slots: sequence.map((code, i) => ({ code, x: 500 + i * 150, y: 500, filled: false })),
-    nucleotides: [
-      makeDrag("nucleotide", "A", 520, 760),
-      makeDrag("nucleotide", "T", 675, 760),
-      makeDrag("nucleotide", "C", 830, 760),
-      makeDrag("nucleotide", "G", 985, 760),
-    ],
+    nucleotides: itemCodes.map((code, i) => makeDrag("nucleotide", code, 520 + i * 155, 760)),
+    selectedSortIndex: null,
+    memoryPhase: "show",
+    memoryIndex: 0,
+    memoryTimer: 0.68,
+    fallingItems: [],
+    fallSpawnTimer: 0.45,
+    fallSpawnCount: 0,
+    fallElapsed: 0,
+    basketX: safeCenterX(),
+    pointerX: null,
     message: "",
     messageTimer: 0,
   };
 }
 
+function shuffleValuesWithNoMatches(values) {
+  let result;
+  do {
+    result = shuffleValues(values);
+  } while (result.some((value, index) => value === values[index]));
+  return result;
+}
+
 function updateNucleotideMinigame(dt) {
   if (nucleotideGame.messageTimer > 0) nucleotideGame.messageTimer -= dt;
   syncNucleotideLayout();
-  handleDrag(nucleotideGame.nucleotides, item => dropNucleotideOnSlot(item));
+  if (nucleotideGame.type === "drag") {
+    handleDrag(nucleotideGame.nucleotides, item => dropNucleotideOnSlot(item));
+  } else if (nucleotideGame.type === "tap") {
+    updateTapNucleotideGame();
+  } else if (nucleotideGame.type === "sort") {
+    updateSortNucleotideGame();
+  } else if (nucleotideGame.type === "catch") {
+    updateCatchNucleotideGame(dt);
+  } else if (nucleotideGame.type === "memory") {
+    updateMemoryNucleotideGame(dt);
+  }
+}
+
+function updateTapNucleotideGame() {
+  if (!mouse.justDown) return;
+  const item = nucleotideGame.nucleotides.find(n => hit(mouse, n.x, n.y, 58));
+  if (item) submitNucleotideChoice(item.code);
+}
+
+function submitNucleotideChoice(code) {
+  if (!nucleotideGame || nucleotideGame.type !== "tap") return false;
+  const expected = nucleotideGame.sequence[nucleotideGame.progress];
+  if (code !== expected) {
+    showNucleotideMessage(`Ahora pulsa ${expected}.`);
+    return false;
+  }
+  nucleotideGame.progress += 1;
+  learnTutorial("nucleotide-tap");
+  playSound("nucleotido_encajar");
+  spawnParticle(safeCenterX(), getNucleotideLayout().slotsY, "#9be8ff", 12);
+  if (nucleotideGame.progress >= nucleotideGame.sequence.length) completeNucleotideGame();
+  return true;
+}
+
+function updateMemoryNucleotideGame(dt) {
+  const game = nucleotideGame;
+  if (game.memoryPhase === "pause") {
+    game.memoryTimer -= dt;
+    if (game.memoryTimer <= 0) {
+      game.memoryPhase = "show";
+      game.memoryIndex = 0;
+      game.memoryTimer = 0.68;
+    }
+    return;
+  }
+  if (game.memoryPhase === "show" || game.memoryPhase === "gap") {
+    game.memoryTimer -= dt;
+    if (game.memoryTimer <= 0) {
+      if (game.memoryPhase === "show") {
+        if (game.memoryIndex >= game.sequence.length - 1) {
+          game.memoryPhase = "input";
+          game.progress = 0;
+        } else {
+          game.memoryPhase = "gap";
+          game.memoryTimer = 0.22;
+        }
+      } else {
+        game.memoryIndex += 1;
+        game.memoryPhase = "show";
+        game.memoryTimer = 0.68;
+      }
+    }
+    return;
+  }
+  if (mouse.justDown) {
+    const item = game.nucleotides.find(n => hit(mouse, n.x, n.y, 58));
+    if (item) submitMemoryChoice(item.code);
+  }
+}
+
+function submitMemoryChoice(code) {
+  const game = nucleotideGame;
+  if (!game || game.type !== "memory" || game.memoryPhase !== "input") return false;
+  const expected = game.sequence[game.progress];
+  if (code !== expected) {
+    game.progress = 0;
+    game.memoryPhase = "pause";
+    game.memoryIndex = -1;
+    game.memoryTimer = 1.05;
+    showNucleotideMessage("No coincide. Observa el patrón otra vez.", false);
+    return false;
+  }
+  game.progress += 1;
+  playSound("nucleotido_encajar");
+  const item = game.nucleotides.find(n => n.code === code);
+  if (item) spawnParticle(item.x, item.y, "#9be8ff", 12);
+  if (game.progress >= game.sequence.length) completeNucleotideGame();
+  return true;
+}
+
+function updateSortNucleotideGame() {
+  const items = nucleotideGame.nucleotides;
+  if (mouse.justDown && !dragItem) {
+    const index = items.findIndex(item => hit(mouse, item.x, item.y, 60));
+    if (index >= 0) {
+      dragItem = items[index];
+      dragItem.dragOrigin = { x: dragItem.x, y: dragItem.y };
+      dragItem.dragging = true;
+      nucleotideGame.sortDragMoved = false;
+      nucleotideGame.sortPointerStart = { x: mouse.x, y: mouse.y };
+    }
+  }
+  if (dragItem && items.includes(dragItem) && mouse.down) {
+    if (Math.hypot(mouse.x - nucleotideGame.sortPointerStart.x, mouse.y - nucleotideGame.sortPointerStart.y) > 9) {
+      nucleotideGame.sortDragMoved = true;
+    }
+    dragItem.x = mouse.x;
+    dragItem.y = mouse.y;
+  }
+  if (!dragItem || !items.includes(dragItem) || !mouse.justUp) return;
+  const item = dragItem;
+  const sourceIndex = items.indexOf(item);
+  const moved = nucleotideGame.sortDragMoved;
+  let targetIndex = -1;
+  if (moved) targetIndex = items.findIndex(other => other !== item && Math.hypot(item.x - other.x, item.y - other.y) < 68);
+  item.dragging = false;
+  if (moved && targetIndex >= 0) {
+    swapSortItems(sourceIndex, targetIndex);
+    nucleotideGame.selectedSortIndex = null;
+  } else if (!moved) {
+    if (nucleotideGame.selectedSortIndex !== null && nucleotideGame.selectedSortIndex !== sourceIndex) {
+      swapSortItems(nucleotideGame.selectedSortIndex, sourceIndex);
+      nucleotideGame.selectedSortIndex = null;
+    } else {
+      nucleotideGame.selectedSortIndex = nucleotideGame.selectedSortIndex === sourceIndex ? null : sourceIndex;
+    }
+  }
+  delete item.dragOrigin;
+  dragItem = null;
+  syncNucleotideLayout();
+  checkSortedNucleotides();
+}
+
+function selectSortNucleotide(index) {
+  if (!nucleotideGame || nucleotideGame.type !== "sort") return;
+  if (nucleotideGame.selectedSortIndex === null) {
+    nucleotideGame.selectedSortIndex = index;
+    return;
+  }
+  if (nucleotideGame.selectedSortIndex === index) {
+    nucleotideGame.selectedSortIndex = null;
+    return;
+  }
+  swapSortItems(nucleotideGame.selectedSortIndex, index);
+  nucleotideGame.selectedSortIndex = null;
+  syncNucleotideLayout();
+  checkSortedNucleotides();
+}
+
+function swapSortItems(a, b) {
+  if (a < 0 || b < 0 || a === b) return;
+  [nucleotideGame.nucleotides[a].code, nucleotideGame.nucleotides[b].code] =
+    [nucleotideGame.nucleotides[b].code, nucleotideGame.nucleotides[a].code];
+  if (nucleotideGame.type === "sort") learnTutorial("nucleotide-sort");
+  playSound("nucleotido_tomar");
+}
+
+function checkSortedNucleotides() {
+  if (!nucleotideGame || nucleotideGame.type !== "sort") return;
+  if (nucleotideGame.nucleotides.every((item, index) => item.code === nucleotideGame.sequence[index])) {
+    learnTutorial("nucleotide-sort");
+    playSound("nucleotido_encajar");
+    completeNucleotideGame();
+  } else {
+    showNucleotideMessage("Sigue intercambiando las letras.", false);
+  }
+}
+
+function updateCatchNucleotideGame(dt) {
+  const layout = getNucleotideLayout();
+  nucleotideGame.fallElapsed += dt;
+  const left = layout.fallLeft;
+  const right = layout.fallRight;
+  const direction = (keys.has("ArrowRight") || keys.has("d") ? 1 : 0) - (keys.has("ArrowLeft") || keys.has("a") ? 1 : 0);
+  if (direction) {
+    nucleotideGame.basketX += direction * 470 * dt;
+  } else if (nucleotideGame.pointerX !== null) {
+    nucleotideGame.basketX = lerp(nucleotideGame.basketX, nucleotideGame.pointerX, Math.min(1, dt * 12));
+  }
+  nucleotideGame.basketX = clamp(nucleotideGame.basketX, left + 48, right - 48);
+
+  nucleotideGame.fallSpawnTimer -= dt;
+  if (nucleotideGame.fallSpawnTimer <= 0) {
+    spawnFallingNucleotide(layout);
+    nucleotideGame.fallSpawnTimer += 0.88;
+  }
+  const speedBoost = Math.min(18, nucleotideGame.fallElapsed * 0.35);
+  for (let i = nucleotideGame.fallingItems.length - 1; i >= 0; i -= 1) {
+    const item = nucleotideGame.fallingItems[i];
+    item.y += (item.speed + speedBoost) * dt;
+    if (Math.abs(item.x - nucleotideGame.basketX) < 64 && item.y >= layout.catchY - 20 && item.y <= layout.catchY + 26) {
+      const expected = nucleotideGame.sequence[nucleotideGame.progress];
+      if (item.code === expected) {
+        nucleotideGame.progress += 1;
+        learnTutorial("nucleotide-catch");
+        playSound("nucleotido_encajar");
+        spawnParticle(item.x, layout.catchY, "#9be8ff", 14);
+        nucleotideGame.fallingItems.splice(i, 1);
+        if (nucleotideGame.progress >= nucleotideGame.sequence.length) {
+          completeNucleotideGame();
+          return;
+        }
+        continue;
+      }
+      showNucleotideMessage(`Busca ${expected}.`, false);
+    }
+    if (item.y > layout.catchY + 70) nucleotideGame.fallingItems.splice(i, 1);
+  }
+}
+
+function spawnFallingNucleotide(layout = getNucleotideLayout()) {
+  const game = nucleotideGame;
+  const guaranteed = game.fallSpawnCount % 2 === 0;
+  const code = guaranteed ? game.sequence[game.progress] : choose(["A", "T", "C", "G"]);
+  game.fallingItems.push({
+    code,
+    x: rand(layout.fallLeft + 45, layout.fallRight - 45),
+    y: layout.fallSpawnY,
+    speed: rand(92, 118),
+  });
+  game.fallSpawnCount += 1;
+}
+
+function showNucleotideMessage(message, sound = true) {
+  if (!nucleotideGame) return;
+  nucleotideGame.message = message;
+  nucleotideGame.messageTimer = 0.9;
+  if (sound) playSound("pieza_no_encaja", { volume: 0.4 });
 }
 
 function dropNucleotideOnSlot(item) {
@@ -1128,19 +1405,23 @@ function dropNucleotideOnSlot(item) {
         playSound("nucleotido_encajar");
         spawnParticle(slot.x, slot.y, "#9be8ff", 16);
       } else {
-        playSound("pieza_no_encaja", {volume:0.4});
-        nucleotideGame.message = `Prueba otra vez: coloca ${slot.code} sobre ${slot.code}.`;
-        nucleotideGame.messageTimer = 1.2;
+        showNucleotideMessage(`Prueba otra vez: coloca ${slot.code} sobre ${slot.code}.`);
       }
       break;
     }
   }
   if (matched && nucleotideGame.slots.every(slot => slot.filled)) {
-    nucleotideGame.dna.processed = true;
-    assembly.pendingDna = nucleotideGame.dna;
-    nucleotideGame = null;
-    setState(State.BIOSYNTHESIS);
+    completeNucleotideGame();
   }
+}
+
+function completeNucleotideGame() {
+  if (!nucleotideGame) return;
+  nucleotideGame.dna.processed = true;
+  assembly.pendingDna = nucleotideGame.dna;
+  nucleotideGame = null;
+  keyboardSelection = null;
+  setState(State.BIOSYNTHESIS);
 }
 
 function createPhagePartsFromDna(dna) {
@@ -1865,19 +2146,157 @@ function drawNucleotideMinigame() {
   ctx.fillStyle = "rgba(3, 17, 27, 0.58)";
   ctx.fillRect(0, 0, W, H);
   drawPanel(layout.panelX, layout.panelY, layout.panelW, layout.panelH, 0.72);
-  drawTextCentered(nucleotideGame.messageTimer > 0 ? nucleotideGame.message : "Completa la secuencia del ADN", safeCenterX(), layout.titleY, layout.titleSize, "#fff", "900");
-  drawImageCenter(img.dnaComplete, safeCenterX(), layout.dnaY, layout.dnaScale, -0.06);
-  for (const slot of nucleotideGame.slots) {
-    drawPanel(slot.x - layout.slotW / 2, slot.y - layout.slotH / 2, layout.slotW, layout.slotH, slot.filled ? 0.5 : 0.32);
-    if (slot.filled) {
-      drawImageCenter(getNucleotideImage(slot.code), slot.x, slot.y, layout.slotNucleotideScale, 0);
-    } else {
-      drawTextCentered(slot.code, slot.x, slot.y + layout.slotLetterOffset, layout.slotLetterSize, "#fff", "900");
+  const titles = { drag: "Completa la secuencia", tap: "Pulsa la letra indicada", sort: "Ordena la secuencia", catch: "Atrapa los nucleótidos", memory: "Memoriza la secuencia" };
+  const title = nucleotideGame.messageTimer > 0 ? nucleotideGame.message : titles[nucleotideGame.type];
+  drawTextCentered(title, safeCenterX(), layout.titleY, layout.titleSize, "#fff", "900");
+
+  if (nucleotideGame.type === "drag") {
+    drawImageCenter(img.dnaComplete, safeCenterX(), layout.dnaY, layout.dnaScale, -0.06);
+    for (const slot of nucleotideGame.slots) {
+      drawPanel(slot.x - layout.slotW / 2, slot.y - layout.slotH / 2, layout.slotW, layout.slotH, slot.filled ? 0.5 : 0.32);
+      if (slot.filled) drawImageCenter(getNucleotideImage(slot.code), slot.x, slot.y, layout.slotNucleotideScale, 0);
+      else drawTextCentered(slot.code, slot.x, slot.y + layout.slotLetterOffset, layout.slotLetterSize, "#fff", "900");
     }
+    drawPanel(layout.trayX, layout.trayY, layout.trayW, layout.trayH, 0.5);
+    drawTextCentered("Nucleótidos", safeCenterX(), layout.trayTitleY, layout.trayTitleSize, "#fff", "900");
+    for (const n of nucleotideGame.nucleotides) {
+      drawNucleotideButton(n, layout, false);
+      drawImageCenter(getNucleotideImage(n.code), n.x, n.y, layout.nucleotideScale, n.dragging ? 0.12 : 0);
+    }
+  } else if (nucleotideGame.type === "tap") {
+    const expected = nucleotideGame.sequence[nucleotideGame.progress];
+    drawTextCentered("PULSA", safeCenterX(), layout.slotsY - 52, layout.compact ? 21 : 26, "#b8ebff", "900");
+    drawImageCenter(getNucleotideImage(expected), safeCenterX(), layout.slotsY + 8, layout.compact ? 0.36 : 0.48, 0);
+    drawNucleotideSequence(layout, nucleotideGame.progress, layout.slotsY + (layout.compact ? 78 : 100), false, false);
+    drawPanel(layout.trayX, layout.trayY, layout.trayW, layout.trayH, 0.5);
+    drawTextCentered("Elige una letra", safeCenterX(), layout.trayTitleY, layout.trayTitleSize, "#fff", "900");
+    for (const n of nucleotideGame.nucleotides) {
+      drawNucleotideButton(n, layout, false);
+      drawImageCenter(getNucleotideImage(n.code), n.x, n.y, layout.nucleotideScale, 0);
+    }
+  } else if (nucleotideGame.type === "sort") {
+    drawTextCentered("OBJETIVO", safeCenterX(), layout.slotsY - 60, layout.compact ? 20 : 24, "#b8ebff", "900");
+    drawNucleotideSequence(layout, nucleotideGame.sequence.length, layout.slotsY, true);
+    drawPanel(layout.trayX, layout.trayY, layout.trayW, layout.trayH, 0.5);
+    drawTextCentered("Tus fichas · toca dos para intercambiarlas", safeCenterX(), layout.trayTitleY, layout.compact ? 16 : 21, "#fff", "900");
+    for (const [i, n] of nucleotideGame.nucleotides.entries()) {
+      drawNucleotideButton(n, layout, i === nucleotideGame.selectedSortIndex);
+      drawImageCenter(getNucleotideImage(n.code), n.x, n.y, layout.nucleotideScale, n.dragging ? 0.12 : 0);
+    }
+  } else if (nucleotideGame.type === "memory") {
+    const observing = nucleotideGame.memoryPhase !== "input";
+    const prompt = nucleotideGame.memoryPhase === "input" ? "REPITE EL PATRÓN" : "OBSERVA EL ORDEN";
+    drawTextCentered(prompt, safeCenterX(), layout.slotsY - 60, layout.compact ? 20 : 24, "#b8ebff", "900");
+    drawMemorySequence(layout);
+    drawPanel(layout.trayX, layout.trayY, layout.trayW, layout.trayH, 0.5);
+    drawTextCentered(observing ? "Memoriza antes de tocar" : "Toca las letras en orden", safeCenterX(), layout.trayTitleY, layout.compact ? 16 : 21, "#fff", "900");
+    for (const n of nucleotideGame.nucleotides) {
+      drawNucleotideButton(n, layout, false);
+      drawImageCenter(getNucleotideImage(n.code), n.x, n.y, layout.nucleotideScale, 0);
+    }
+  } else {
+    drawTextCentered("CADENA OBJETIVO", safeCenterX(), layout.slotsY - 60, layout.compact ? 20 : 24, "#b8ebff", "900");
+    drawNucleotideSequence(layout, nucleotideGame.progress, layout.slotsY, true);
+    ctx.save();
+    ctx.strokeStyle = "rgba(155, 232, 255, 0.42)";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([10, 12]);
+    ctx.beginPath();
+    ctx.moveTo(layout.fallLeft, layout.catchY);
+    ctx.lineTo(layout.fallRight, layout.catchY);
+    ctx.stroke();
+    ctx.restore();
+    for (const item of nucleotideGame.fallingItems) {
+      drawPanel(item.x - 34, item.y - 34, 68, 68, 0.45);
+      drawImageCenter(getNucleotideImage(item.code), item.x, item.y, layout.compact ? 0.28 : 0.34, 0);
+    }
+    drawCatchBasket(nucleotideGame.basketX, layout.catchY, layout.compact);
   }
-  drawPanel(layout.trayX, layout.trayY, layout.trayW, layout.trayH, 0.5);
-  drawTextCentered("Nucleótidos", safeCenterX(), layout.trayTitleY, layout.trayTitleSize, "#fff", "900");
-  for (const n of nucleotideGame.nucleotides) drawImageCenter(getNucleotideImage(n.code), n.x, n.y, layout.nucleotideScale, n.dragging ? 0.12 : 0);
+}
+
+function drawMemorySequence(layout) {
+  const game = nucleotideGame;
+  const gap = layout.compact ? 84 : 145;
+  const startX = safeCenterX() - gap * (game.sequence.length - 1) / 2;
+  const size = layout.compact ? 72 : 104;
+  const showing = game.memoryPhase === "show" || game.memoryPhase === "gap";
+  game.sequence.forEach((code, index) => {
+    const x = startX + index * gap;
+    const revealed = showing && index <= game.memoryIndex;
+    const answered = game.memoryPhase === "input" && index < game.progress;
+    const active = game.memoryPhase === "show" && index === game.memoryIndex;
+    drawPanel(x - size / 2, layout.slotsY - size / 2, size, size, active ? 0.68 : revealed || answered ? 0.5 : 0.32);
+    if (revealed || answered) {
+      const pulse = active ? 1 + Math.sin((0.68 - game.memoryTimer) * 10) * 0.045 : 1;
+      drawImageCenter(getNucleotideImage(code), x, layout.slotsY, (layout.compact ? 0.28 : 0.36) * pulse, 0);
+    }
+    if (active) {
+      ctx.save();
+      ctx.strokeStyle = "#83e8ff";
+      ctx.lineWidth = 4;
+      roundedRect(x - size / 2, layout.slotsY - size / 2, size, size, 14);
+      ctx.stroke();
+      ctx.restore();
+    }
+  });
+}
+
+function drawNucleotideButton(item, layout, highlighted) {
+  const size = layout.compact ? 80 : 112;
+  drawPanel(item.x - size / 2, item.y - size / 2, size, size, highlighted ? 0.72 : 0.42);
+  if (highlighted) {
+    ctx.save();
+    ctx.strokeStyle = "#ffdd69";
+    ctx.lineWidth = 4;
+    roundedRect(item.x - size / 2, item.y - size / 2, size, size, 16);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function drawNucleotideSequence(layout, progress, y, revealAll, highlightCurrent = true) {
+  const gap = layout.compact ? 84 : 145;
+  const startX = safeCenterX() - gap * (nucleotideGame.sequence.length - 1) / 2;
+  nucleotideGame.sequence.forEach((code, index) => {
+    const x = startX + index * gap;
+    const size = layout.compact ? 72 : 104;
+    const complete = index < progress;
+    const current = highlightCurrent && index === progress;
+    drawPanel(x - size / 2, y - size / 2, size, size, current ? 0.72 : complete ? 0.52 : 0.32);
+    if (revealAll || complete) {
+      drawImageCenter(getNucleotideImage(code), x, y, layout.compact ? 0.28 : 0.36, 0);
+    } else if (nucleotideGame.type !== "tap") {
+      drawTextCentered("?", x, y + (layout.compact ? 10 : 13), layout.compact ? 30 : 38, "#fff", "900");
+    }
+    if (current) {
+      ctx.save();
+      ctx.strokeStyle = "#ffdd69";
+      ctx.lineWidth = 4;
+      roundedRect(x - size / 2, y - size / 2, size, size, 14);
+      ctx.stroke();
+      ctx.restore();
+    }
+  });
+}
+
+function drawCatchBasket(x, y, compact) {
+  const width = compact ? 116 : 148;
+  const height = compact ? 34 : 42;
+  const top = y - height / 2;
+  ctx.save();
+  ctx.shadowColor = "#72dfff";
+  ctx.shadowBlur = 16;
+  ctx.fillStyle = "rgba(49, 170, 202, 0.54)";
+  ctx.strokeStyle = "#b8f1ff";
+  ctx.lineWidth = 4;
+  roundedRect(x - width / 2, top, width, height, 8);
+  ctx.fill();
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(x - width / 2 + 16, top + height - 7);
+  ctx.lineTo(x + width / 2 - 16, top + height - 7);
+  ctx.stroke();
+  ctx.restore();
 }
 
 function getNucleotideLayout() {
@@ -1887,21 +2306,25 @@ function getNucleotideLayout() {
   const availableBottom = safeBottom(0, bottomReserved);
   const availableHeight = Math.max(300, availableBottom - availableTop);
   const compact = availableHeight < 560;
+  const type = nucleotideGame?.type || "drag";
   const panelW = 920;
   const panelX = safeCenterX() - panelW / 2;
   const panelY = availableTop;
   const panelH = availableHeight;
-  const titleY = panelY + (compact ? 40 : 58);
-  const dnaY = panelY + panelH * (compact ? 0.22 : 0.25);
-  const slotsY = panelY + panelH * (compact ? 0.45 : 0.49);
-  const trayH = compact ? 112 : 156;
+  const titleY = panelY + (compact ? 36 : 46);
+  const contentRatios = { drag: 0.39, tap: 0.34, sort: 0.36, catch: 0.27, memory: 0.36 };
+  const slotsY = panelY + panelH * (contentRatios[type] || 0.39);
+  const dnaY = panelY + panelH * 0.17;
+  const trayH = compact ? 100 : 136;
   const trayW = Math.min(panelW - 180, compact ? 580 : 720);
   const trayX = safeCenterX() - trayW / 2;
-  const trayY = panelY + panelH - trayH - (compact ? 10 : 18);
+  const nucY = panelY + panelH * (compact ? 0.75 : 0.76);
+  const trayY = nucY - trayH * 0.53;
   const slotGap = compact ? 86 : 150;
   const slotW = compact ? 72 : 104;
   const slotH = compact ? 78 : 116;
-  const nucGap = compact ? 92 : 155;
+  const nucGap = compact ? 100 : 170;
+  const catchY = panelY + panelH - (compact ? 58 : 70);
   return {
     compact,
     panelX,
@@ -1923,11 +2346,15 @@ function getNucleotideLayout() {
     trayY,
     trayW,
     trayH,
-    trayTitleY: trayY - 12,
+    trayTitleY: trayY - 10,
     trayTitleSize: compact ? 19 : 24,
     nucGap,
-    nucY: trayY + trayH * 0.53,
+    nucY,
     nucleotideScale: compact ? 0.36 : 0.52,
+    fallLeft: panelX + 74,
+    fallRight: panelX + panelW - 74,
+    fallSpawnY: panelY + panelH * (compact ? 0.39 : 0.39),
+    catchY,
   };
 }
 
@@ -3199,9 +3626,22 @@ function getTutorialCue() {
     const dna = replication.dnaPieces.find(d => copying ? !d.duplicated : !d.processed);
     if (dna) cue = tap(copying ? 'dna-copy' : 'dna-process', dna);
   } else if (state === State.NUCLEOTIDE_MINIGAME && nucleotideGame) {
-    const slot = nucleotideGame.slots.find(s => !s.filled);
-    const item = slot && nucleotideGame.nucleotides.find(n => n.code === slot.code);
-    if (item) cue = { key: 'nucleotide', source: item, target: slot, drag: true };
+    if (nucleotideGame.type === 'drag') {
+      const slot = nucleotideGame.slots.find(s => !s.filled);
+      const item = slot && nucleotideGame.nucleotides.find(n => n.code === slot.code);
+      if (item) cue = { key: 'nucleotide', source: item, target: slot, drag: true };
+    } else if (nucleotideGame.type === 'tap') {
+      const expected = nucleotideGame.sequence[nucleotideGame.progress];
+      const item = nucleotideGame.nucleotides.find(n => n.code === expected);
+      if (item) cue = tap('nucleotide-tap', item);
+    } else if (nucleotideGame.type === 'sort') {
+      const wrong = nucleotideGame.nucleotides.findIndex((item, index) => item.code !== nucleotideGame.sequence[index]);
+      if (wrong >= 0) {
+        const wanted = nucleotideGame.nucleotides.findIndex(item => item.code === nucleotideGame.sequence[wrong]);
+        const source = nucleotideGame.nucleotides[wrong], target = nucleotideGame.nucleotides[wanted];
+        if (source && target) cue = { key: 'nucleotide-sort', source, target, drag: true };
+      }
+    }
   } else if (state === State.PART_ASSEMBLY) {
     const hint = getAssemblyHint();
     const source = assembly.activeParts.find(p => p.kind === hint.source);
@@ -3306,6 +3746,16 @@ window.addEventListener("keydown", ev => {
   if (isDisplayBlocked() || ev.target?.closest?.('button, input, select, textarea, dialog')) return;
   if ((ev.key === " " || ev.key === "Spacebar") && !ev.repeat && !keys.has(key)) pendingActionTaps++;
   keys.add(key);
+  if (!ev.repeat && state === State.NUCLEOTIDE_MINIGAME && nucleotideGame) {
+    const nucleotideKey = key.toUpperCase();
+    if (nucleotideGame.type === "tap" && ["A", "T", "C", "G"].includes(nucleotideKey)) {
+      submitNucleotideChoice(nucleotideKey);
+    } else if (nucleotideGame.type === "memory" && ["A", "T", "C", "G"].includes(nucleotideKey)) {
+      submitMemoryChoice(nucleotideKey);
+    } else if (nucleotideGame.type === "sort" && ["1", "2", "3", "4"].includes(key)) {
+      selectSortNucleotide(Number(key) - 1);
+    }
+  }
   if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " "].includes(ev.key)) ev.preventDefault();
 });
 
@@ -3318,6 +3768,7 @@ window.addEventListener("keyup", ev => {
 canvas.addEventListener("pointerdown", ev => {
   if (!gameReady || isDisplayBlocked() || soundEffects.menuOpen || storyIntroActive) return;
   const p = screenToCanvas(ev);
+  if (state === State.NUCLEOTIDE_MINIGAME && nucleotideGame?.type === "catch") nucleotideGame.pointerX = p.x;
   if (state === State.LYSIS) {
     if (!lysis.burst) pendingActionTaps++;
     canvas.setPointerCapture(ev.pointerId);
@@ -3341,6 +3792,7 @@ canvas.addEventListener("pointerdown", ev => {
 
 canvas.addEventListener("pointermove", ev => {
   const p = screenToCanvas(ev);
+  if (state === State.NUCLEOTIDE_MINIGAME && nucleotideGame?.type === "catch") nucleotideGame.pointerX = p.x;
   if (infectionPointer?.id === ev.pointerId) {
     infectionPointer.x = p.x; infectionPointer.y = p.y;
     if (!infectionPointerHeld()) infectionPointer.elapsed = 0;

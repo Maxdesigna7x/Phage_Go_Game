@@ -74,24 +74,64 @@ function registerMinigameControls() {
     }
   }
   if (state === State.NUCLEOTIDE_MINIGAME) {
-    for (const [i,item] of nucleotideGame.nucleotides.entries()) {
-      registerSemanticControl(`nucleotide-${i}`,item.x-55,item.y-55,110,110,`Seleccionar nucleótido ${item.code}`,()=>{
-        keyboardSelection = item;
-        announceGameState(mobileControls
-          ? `Nucleótido ${item.code} seleccionado. Toca la casilla con la misma letra.`
-          : `Nucleótido ${item.code} seleccionado. Elige su destino con Tab y pulsa Enter.`);
-      });
-    }
-    for (const [i,slot] of nucleotideGame.slots.entries()) if (!slot.filled) {
-      registerSemanticControl(`slot-${i}`,slot.x-55,slot.y-55,110,110,`Colocar en destino ${slot.code}`,()=>{
-        if (!keyboardSelection) { announceGameState('Selecciona primero un nucleótido.'); return; }
-        const item = keyboardSelection;
-        item.x=slot.x; item.y=slot.y;
-        dropNucleotideOnSlot(item);
-        item.x=item.ox; item.y=item.oy;
-        keyboardSelection=null;
-        if(state===State.NUCLEOTIDE_MINIGAME) announceGameState(slot.filled?'Nucleótido colocado. Selecciona el siguiente.':'Las letras no coinciden. Selecciona otro nucleótido.');
-      });
+    if (nucleotideGame.type === 'drag') {
+      for (const [i,item] of nucleotideGame.nucleotides.entries()) {
+        registerSemanticControl(`nucleotide-${i}`,item.x-55,item.y-55,110,110,`Seleccionar nucleótido ${item.code}`,()=>{
+          keyboardSelection = item;
+          announceGameState(`Nucleótido ${item.code} seleccionado. Elige su espacio con Tab y pulsa Enter.`);
+        });
+      }
+      for (const [i,slot] of nucleotideGame.slots.entries()) if (!slot.filled) {
+        registerSemanticControl(`slot-${i}`,slot.x-55,slot.y-55,110,110,`Colocar en destino ${slot.code}`,()=>{
+          if (!keyboardSelection) { announceGameState('Selecciona primero un nucleótido.'); return; }
+          const item = keyboardSelection;
+          item.x=slot.x; item.y=slot.y;
+          dropNucleotideOnSlot(item);
+          item.x=item.ox; item.y=item.oy;
+          keyboardSelection=null;
+          if(state===State.NUCLEOTIDE_MINIGAME) announceGameState(slot.filled?'Nucleótido colocado. Selecciona el siguiente.':'Las letras no coinciden. Selecciona otro nucleótido.');
+        });
+      }
+    } else if (nucleotideGame.type === 'tap') {
+      for (const [i,item] of nucleotideGame.nucleotides.entries()) {
+        registerSemanticControl(`nucleotide-${i}`,item.x-55,item.y-55,110,110,`Pulsar nucleótido ${item.code}`,()=>{
+          const correct = submitNucleotideChoice(item.code);
+          if (state === State.NUCLEOTIDE_MINIGAME) announceGameState(correct
+            ? `Correcto. ${nucleotideGame.progress} de 4 letras.`
+            : `Esa no es la letra indicada. Pulsa ${nucleotideGame.sequence[nucleotideGame.progress]}.`);
+        });
+      }
+    } else if (nucleotideGame.type === 'sort') {
+      for (const [i,item] of nucleotideGame.nucleotides.entries()) {
+        const selected = nucleotideGame.selectedSortIndex === i;
+        registerSemanticControl(`nucleotide-${i}`,item.x-55,item.y-55,110,110,
+          selected ? `Seleccionado ${item.code}. Elige otra ficha para intercambiarla.` : `Seleccionar ficha ${item.code}`,
+          ()=>{
+            selectSortNucleotide(i);
+            if (state === State.NUCLEOTIDE_MINIGAME) announceGameState(nucleotideGame.selectedSortIndex === null
+              ? 'Fichas intercambiadas. Sigue ordenando la cadena.'
+              : `Ficha ${item.code} seleccionada. Elige otra para intercambiarla.`);
+          });
+      }
+    } else if (nucleotideGame.type === 'catch') {
+      const layout = getNucleotideLayout();
+      registerSemanticControl('catch-left',nucleotideGame.basketX-150,layout.catchY-50,90,100,
+        'Mover la cesta a la izquierda',()=>{ nucleotideGame.basketX -= 90; announceGameState('Cesta movida a la izquierda.'); });
+      registerSemanticControl('catch-right',nucleotideGame.basketX+60,layout.catchY-50,90,100,
+        'Mover la cesta a la derecha',()=>{ nucleotideGame.basketX += 90; announceGameState('Cesta movida a la derecha.'); });
+    } else if (nucleotideGame.type === 'memory') {
+      for (const [i,item] of nucleotideGame.nucleotides.entries()) {
+        registerSemanticControl(`nucleotide-${i}`,item.x-55,item.y-55,110,110,`Pulsar nucleótido ${item.code}`,()=>{
+          if (nucleotideGame.memoryPhase !== 'input') {
+            announceGameState('Observa la secuencia antes de responder.');
+            return;
+          }
+          const correct = submitMemoryChoice(item.code);
+          if (state === State.NUCLEOTIDE_MINIGAME) announceGameState(correct
+            ? `Correcto. ${nucleotideGame.progress} de 4 letras.`
+            : 'La secuencia se repetirá. Observa de nuevo.');
+        });
+      }
     }
   }
   if (state === State.PART_ASSEMBLY) {
