@@ -6,7 +6,7 @@ import numpy as np
 from PIL import Image
 from scipy.ndimage import distance_transform_edt
 root=Path(__file__).resolve().parents[1]
-files=list((root/'assets_webp/celulas').glob('*.webp'))+list((root/'assets_webp/new_size').glob('*.webp'))
+files=[p for folder in ('celulas','new_size','macrofago') for p in (root/'assets_webp'/folder).glob('*.webp')]
 shapes={}
 for p in sorted(files):
     im=Image.open(p).convert('RGBA')

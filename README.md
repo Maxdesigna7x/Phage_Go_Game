@@ -67,3 +67,13 @@ Las bacterias de infección usan el interior y las seis fases exteriores de `ass
 El mundo combina 50 % de posiciones no bacterianas, 25 % de bacterias sanas y 25 % de bacterias rotas. Incluye tres variantes de cada familia celular, información al chocar y glow rojo para elementos incompatibles. Las plaquetas reciben empujones, giran y frenan con resistencia. Las colisiones siguen campos precalculados de alfa, incluidos entrantes y huecos. La brújula usa icono de bacteria y flecha; la etapa activa se muestra a más del doble del tamaño de las restantes.
 
 La distribución visible puede variar con la cámara y el ciclo de infección. Los tamaños son una adaptación jugable. Decisiones de planos, tamaños, conversión y validación en [docs/PLAN-MUNDO-CELULAS.md](docs/PLAN-MUNDO-CELULAS.md).
+
+## Macrófago en modo difícil
+
+Solo el modo difícil incorpora un macrófago cercano. Patrulla, detecta al fago, lo persigue y abandona el objetivo si se aleja. Antes de cerrar sus prolongaciones muestra una zona de captura durante 1,15 s. Un roce desplaza al fago; la captura requiere permanecer en la copa durante el cierre. La inyección, los minijuegos y el escape suspenden la amenaza, con tres segundos de protección al volver al vuelo.
+
+El macrófago empuja plaquetas, otras células y bacterias al desplazarse, con masas, freno y transferencia de empujes. La bacteria objetivo está protegida. Los cuerpos conservan su posición mientras permanecen en la vecindad activa. La captura muestra Game Over y permite volver al menú con un toque/clic o automáticamente tras seis segundos.
+
+Animación y conducta en `enemies.js`; originales de lienzo compartido en `assets/macrofago/` y tres WebP en `assets_webp/macrofago/`. Las siluetas se regeneran con `python scripts/build_collision_shapes.py`. Detalles y validación en [docs/macrofago-gameplay.md](docs/macrofago-gameplay.md).
+
+Pruebas automáticas: `node --test tests/game.test.cjs tests/sound.test.cjs`. La prueba opcional `node tests/browser-enemies.cjs` requiere Playwright y Chromium, y un servidor local en el puerto 8765; admite `PHAGE_TEST_URL` y `PHAGE_TEST_OUTPUT`.

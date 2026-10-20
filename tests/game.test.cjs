@@ -15,7 +15,7 @@ function game(effects) {
   if (effects) sandbox.window.SFX=effects;
   sandbox.atob=atob;
   vm.createContext(sandbox);
-  for (const file of ["world-shapes.js","world.js"]) vm.runInContext(fs.readFileSync(require("node:path").join(__dirname,"..",file),"utf8"),sandbox);
+  for (const file of ["world-shapes.js","world.js","enemies.js"]) vm.runInContext(fs.readFileSync(require("node:path").join(__dirname,"..",file),"utf8"),sandbox);
   let source = fs.readFileSync(require('node:path').join(__dirname, '../game.js'), 'utf8');
   source = source.slice(0, source.lastIndexOf('\nresizeCanvasToViewport();'));
   vm.runInContext(source, sandbox);
@@ -517,15 +517,46 @@ test('mobile browsers supporting fullscreen pause until fullscreen is entered', 
 });
 
 
-test('injection control is on the right and lysis has no action button', () => {
-  const { run } = game();
-  assert.equal(run(`(() => {
-    mobileControls=true; setState(State.INJECTION); beginUiFrame(); drawMobileControls();
-    const action=uiButtons.find(b=>b.id==='action');
-    if(!action || action.x<W/2 || getMobileActionLabel()!=='Inyectar') return false;
-    setState(State.LYSIS); beginUiFrame(); drawMobileControls();
-    return !uiButtons.some(b=>b.id==='action');
-  })()`),true);
+test('infection prompt is the single centred action on desktop and mobile; release stops injection', () => {
+  const { run, listeners } = game();
+  for (const mobile of [false, true]) {
+    run(`mobileControls=${mobile}; startGame(GameMode.NORMAL); attachCandidate=bacteriaField.find(isBacteriaInteractable); targetBacteria=attachCandidate;`);
+    for (const state of ['SEARCH', 'ADSORPTION', 'INJECTION']) {
+      run(`setState(State.${state}); beginUiFrame(); drawHud();`);
+      assert.equal(run('uiButtons.filter(b=>b.id==="action").length'), 1);
+      assert.equal(run('(() => { const b=uiButtons.find(b=>b.id==="action"); return b.x+b.w/2===safeCenterX() && b.y===safeBottom(70, SAFE_MARGIN+18); })()'), true);
+    }
+    run(`{ const action=uiButtons.find(b=>b.id==='action'); handleUiPointerDown({x:action.x+10,y:action.y+10},7); }`);
+    assert.equal(run('touchControls.actionDown'), true);
+    run('injectionProgress=0; updateInjection(0.5,touchControls.actionDown);');
+    const progress=run('injectionProgress');
+    assert.ok(progress>0);
+    listeners['game:pointerup']({pointerId:7});
+    assert.equal(run('touchControls.actionDown'), false);
+    run('updateInjection(0.5,touchControls.actionDown);');
+    assert.equal(run('injectionProgress'), progress);
+    run('state=State.SEARCH; attachCandidate=null; beginUiFrame(); drawHud();');
+    assert.equal(run('uiButtons.some(b=>b.id==="action")'), false);
+    run('state=State.LYSIS; beginUiFrame(); drawHud();');
+    assert.equal(run('uiButtons.some(b=>b.id==="action")'), false);
+  }
+});
+
+test('fullscreen button hides while fullscreen is active and returns after leaving on desktop and mobile', () => {
+  const { run, nodes, sandbox, listeners } = game();
+  let hidden=false;
+  nodes.fullscreenButton.classList.toggle=(name,value)=>{ if(name==='hidden') hidden=value; };
+  for(const mobile of [0,1]) {
+    sandbox.navigator.maxTouchPoints=mobile;
+    for(const property of ['fullscreenElement','webkitFullscreenElement']) {
+      sandbox.document[property]={};
+      listeners['document:'+ (property==='fullscreenElement'?'fullscreenchange':'webkitfullscreenchange')]();
+      assert.equal(hidden,true);
+      sandbox.document[property]=null;
+      run('resizeCanvasToViewport();');
+      assert.equal(hidden,false);
+    }
+  }
 });
 
 test('silhouette halos use fixed screen blur and reuse bounded per-asset rasters', () => {
@@ -889,4 +920,213 @@ test('pushing a platelet keeps leg frames and swim audio running without repeati
   const before=sounds.filter(s=>s==='fago_nadar').length;
   run('updateSoundEffects(false);');
   assert.equal(sounds.filter(s=>s==='fago_nadar').length,before);
+});
+
+test('macrophages never spawn, draw or capture in easy mode and reset between runs', () => {
+  const {run}=game();
+  assert.equal(run(`(() => {
+    startGame(GameMode.NORMAL); macrophageGrace=0;
+    for(let i=0;i<600;i++) updateMacrophages(1/60);
+    if(macrophages.length || spawnMacrophage()) return false;
+    captureByMacrophage(makeMacrophage(player.x,player.y));
+    if(state!==State.SEARCH) return false;
+    startGame(GameMode.HARD);macrophages=[makeMacrophage(800,0)];
+    startGame(GameMode.NORMAL);
+    return macrophages.length===0 && macrophageGameOver===null;
+  })()`),true);
+});
+
+test('hard mode spawns at most one macrophage in clear space away from the player', () => {
+  const {run}=game();
+  assert.equal(run(`(() => {
+    startGame(GameMode.HARD);
+    for(let i=0;i<300;i++) updateMacrophages(1/60);
+    if(macrophages.length!==1) return false;
+    const e=macrophages[0];
+    return Math.hypot(e.x-player.x,e.y-player.y)>600 && macrophageClearance(e)>=MACROPHAGE.radius && !spawnMacrophage() && !isBacteriaInteractable(e);
+  })()`),true);
+});
+
+test('macrophage chases nearby players, uses hysteresis and abandons a distant target', () => {
+  const {run}=game();
+  assert.equal(run(`(() => {
+    startGame(GameMode.HARD);bacteriaField=[];cellField=[];macrophageGrace=0;
+    const e=makeMacrophage(0,0);macrophages=[e];player.x=600;player.y=0;
+    updateMacrophages(.02);if(e.mode!=='chase') return false;
+    for(let i=0;i<60;i++){player.x=e.x+900;updateMacrophages(1/60);}
+    if(e.mode!=='chase' || e.lost!==0 || e.x===0) return false;
+    for(let i=0;i<150;i++){player.x=e.x+1250;updateMacrophages(1/60);}
+    return e.mode==='return' && e.cooldown>0 && Math.hypot(e.vx,e.vy)<MAX_SPEED;
+  })()`),true);
+});
+
+test('a stationary fago in the cup receives warning before sustained capture and game over', () => {
+  const {run}=game();
+  assert.equal(run(`(() => {
+    startGame(GameMode.HARD);bacteriaField=[];cellField=[];macrophageGrace=0;
+    const e=makeMacrophage(0,0);macrophages=[e];
+    const mouth=macrophageMouth(e);player.x=mouth.x;player.y=mouth.y;player.rotation=0;
+    let warned=false,warningFrames=0;
+    for(let i=0;i<240 && state===State.SEARCH;i++) {
+      updateMacrophages(1/60);
+      if(e.mode==='windup') {warned=true;warningFrames++;}
+    }
+    return warned && warningFrames>=60 && state===State.GAME_OVER && macrophageGameOver.enemy===e;
+  })()`),true);
+});
+
+test('escaping sideways during the warning avoids capture and the attacker recovers', () => {
+  const {run}=game();
+  assert.equal(run(`(() => {
+    startGame(GameMode.HARD);bacteriaField=[];cellField=[];macrophageGrace=0;
+    const e=makeMacrophage(0,0);macrophages=[e];changeMacrophageMode(e,'windup');
+    const rotation=e.rotation;player.x=150;player.y=400;
+    for(let i=0;i<120;i++) updateMacrophages(1/60);
+    return state===State.SEARCH && e.mode==='recover' && e.rotation===rotation && e.capture===0;
+  })()`),true);
+});
+
+test('brief cup contact and membrane contact do not count as sustained capture', () => {
+  const {run}=game();
+  assert.equal(run(`(() => {
+    startGame(GameMode.HARD);bacteriaField=[];cellField=[];macrophageGrace=0;
+    const e=makeMacrophage(0,0);macrophages=[e];changeMacrophageMode(e,'close');
+    const mouth=macrophageMouth(e);player.x=mouth.x;player.y=mouth.y;
+    updateMacrophages(.08);if(state!==State.SEARCH) return false;
+    player.x=mouth.x;player.y=400;updateMacrophages(.1);
+    if(e.capture!==0) return false;
+    player.x=mouth.x;player.y=mouth.y;updateMacrophages(.08);
+    if(state!==State.SEARCH) return false;
+    changeMacrophageMode(e,'close');player.x=-160;player.y=0;
+    for(let i=0;i<45;i++) updateMacrophages(1/60);
+    return state===State.SEARCH && e.mode==='recover';
+  })()`),true);
+});
+
+test('infection, all minigames and escape freeze enemies and grant flight protection', () => {
+  const {run}=game();
+  assert.equal(run(`(() => {
+    startGame(GameMode.HARD);bacteriaField=[];cellField=[];
+    const e=makeMacrophage(0,0);macrophages=[e];
+    for(const phase of [State.ADSORPTION,State.INJECTION,State.DNA_REPLICATION,State.NUCLEOTIDE_MINIGAME,State.BIOSYNTHESIS,State.PART_ASSEMBLY,State.LYSIS,State.ESCAPE]) {
+      state=phase;changeMacrophageMode(e,'close');e.capture=.23;
+      updateMacrophages(.1);
+      if(state!==phase || e.capture!==0 || e.x!==0 || e.y!==0 || macrophageGrace!==MACROPHAGE.graceSeconds) return false;
+    }
+    setState(State.SEARCH);changeMacrophageMode(e,'close');
+    const mouth=macrophageMouth(e);player.x=mouth.x;player.y=mouth.y;
+    for(let i=0;i<120;i++) updateMacrophages(1/60);
+    return state===State.SEARCH && macrophageGrace>0;
+  })()`),true);
+});
+
+test('macrophages navigate around the protected bacterium without passing through its silhouette', () => {
+  const {run}=game();
+  assert.equal(run(`(() => {
+    startGame(GameMode.HARD);cellField=[];
+    bacteriaField=[makeBacteria(700,0,.7,0,1)];targetBacteria=bacteriaField[0];
+    const e=makeMacrophage(0,0);
+    for(let i=0;i<1800;i++) {
+      moveMacrophage(e,Math.atan2(-e.y,1600-e.x),MACROPHAGE.chaseSpeed,1/60);
+      if(macrophageClearance(e)<MACROPHAGE.radius) return false;
+    }
+    return e.x>1100;
+  })()`),true);
+});
+
+test('pause freezes warning and closure rather than advancing to a surprise capture', () => {
+  const {run,sandbox}=game();
+  run(`startGame(GameMode.HARD);macrophageGrace=0;macrophages=[makeMacrophage(0,0)];changeMacrophageMode(macrophages[0],'windup');macrophages[0].elapsed=.5;`);
+  sandbox.document.hidden=true;
+  run('loop(16);');sandbox.now+=120000;run('loop(32);');
+  assert.equal(run('macrophages[0].elapsed'),.5);
+  assert.equal(run('state'), 'search');
+});
+
+test('game over freezes gameplay, supports touch return and automatically returns to the menu', () => {
+  for(const mobile of [false,true]) {
+    const {run}=game();
+    assert.equal(run(`(() => {
+      startGame(GameMode.HARD);mobileControls=${mobile};macrophageGrace=0;
+      const e=makeMacrophage(player.x-150,player.y);macrophages=[e];score=225;kills=2;
+      captureByMacrophage(e);stateTime=1;render(0);
+      const button=uiButtons.find(b=>b.id==='game-over-menu');
+      if(state!==State.GAME_OVER || !button || touchControls.actionDown) return false;
+      const x=player.x;update(.033,true,20);
+      if(player.x!==x || score!==225 || kills!==2) return false;
+      handleUiPointerDown({x:button.x+20,y:button.y+20},10);
+      if(state!==State.INTRO || macrophages.length || macrophageGameOver) return false;
+      startGame(GameMode.HARD);macrophageGrace=0;captureByMacrophage(makeMacrophage(0,0));
+      stateTime=MACROPHAGE.menuSeconds;update(.016,false,0);
+      return state===State.INTRO && gameMode===GameMode.NORMAL && macrophages.length===0;
+    })()`),true);
+  }
+});
+
+test('macrophage frames share an untrimmed canvas and have precomputed alpha collision fields', () => {
+  const {run}=game();
+  assert.equal(run(`['idle','reach','closed'].every(phase=>{
+    const key='macrofago_'+phase, shape=collisionShape(key);
+    return ASSETS[key].endsWith('.webp') && shape && shape.width===1254 && shape.height===1254 && shape.points.length>0;
+  })`),true);
+});
+
+test('patrolling and chasing macrophages push cells and healthy or broken bacteria with bounded speed', () => {
+  const {run}=game();
+  assert.equal(run(`(() => {
+    for(const speed of [MACROPHAGE.patrolSpeed,MACROPHAGE.chaseSpeed]) for(const kind of ['healthy','broken','plaqueta','celula_animal']) {
+      startGame(GameMode.HARD);bacteriaField=[];cellField=[];targetBacteria=null;
+      const body=kind==='healthy'||kind==='broken'?makeBacteria(550,0,.7,0,kind==='healthy'?1:3,kind,100):makeWorldCell(kind,550,0,100);
+      body.rotation=0;
+      if(body.kind==='cell') cellField=[body];else bacteriaField=[body];
+      const start=body.x,e=makeMacrophage(0,0);
+      for(let i=0;i<420;i++){moveMacrophage(e,0,speed,1/60);updateWorldCells(1/60);}
+      if(!body.enemyMovable || body.x<start+35 || e.x<40 || Math.hypot(body.vx,body.vy)>(body.movable?240:90) || macrophageClearance(e)<MACROPHAGE.radius-2) return false;
+    }
+    return true;
+  })()`),true);
+});
+
+test('the infection target is anchored even when the macrophage pushes or another body hits it', () => {
+  const {run}=game();
+  assert.equal(run(`(() => {
+    startGame(GameMode.HARD);cellField=[];
+    const target=makeBacteria(550,0,.7,0,1),pusher=makeBacteria(0,0,.7,0,1);
+    bacteriaField=[target,pusher];targetBacteria=target;
+    pusher.enemyMovable=true;pusher.vx=90;pusher.vy=0;pusher.spin=0;
+    const e=makeMacrophage(0,0);
+    for(let i=0;i<240;i++){pushMacrophageObjects(e,0,1/60);updateWorldCells(1/60);}
+    return target.x===550 && target.y===0 && !target.enemyMovable && !target.vx;
+  })()`),true);
+});
+
+test('pushing transfers motion through neighbouring bodies and their positions survive world refresh', () => {
+  const {run}=game();
+  assert.equal(run(`(() => {
+    startGame(GameMode.HARD);cellField=[];targetBacteria=null;
+    const first=makeBacteria(550,0,.7,0,1),second=makeBacteria(1150,0,.7,0,3,'broken');
+    bacteriaField=[first,second];const e=makeMacrophage(0,0);
+    for(let i=0;i<900;i++){moveMacrophage(e,0,MACROPHAGE.chaseSpeed,1/60);updateWorldCells(1/60);}
+    if(first.x<=650 || second.x<=1170 || !second.enemyMovable) return false;
+    startGame(GameMode.HARD);
+    const b=bacteriaField.find(body=>Math.hypot(body.x-player.x,body.y-player.y)<1200);
+    b.x+=120;b.rotation+=.2;const x=b.x,rotation=b.rotation;
+    updateProceduralBacteriaIfNeeded(true);
+    const kept=bacteriaField.find(body=>body.seed===b.seed);
+    return kept===b && kept.x===x && kept.rotation===rotation;
+  })()`),true);
+});
+
+test('finishing a cycle keeps the pushed bacterium remains at their actual world position', () => {
+  const {run}=game();
+  assert.equal(run(`(() => {
+    startGame(GameMode.HARD);targetBacteria=bacteriaField.find(isBacteriaInteractable);
+    targetBacteria.x+=130;targetBacteria.y+=50;
+    const b=targetBacteria,x=b.x,y=b.y;
+    b.variant=6;b.healthy=false;b.infectable=false;b.health='broken';infectedBacteriaSeeds.add(b.seed);
+    escape={hero:{x:x+300,y,vx:50,vy:0,rotation:0}};
+    returnToFlightAfterKill();
+    const kept=bacteriaField.find(body=>body.seed===b.seed);
+    return kept===b && kept.x===x && kept.y===y && !isBacteriaInteractable(kept);
+  })()`),true);
 });

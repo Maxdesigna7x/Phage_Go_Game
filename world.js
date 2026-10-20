@@ -73,3 +73,9 @@ function cellEncounterText(cell) {
   const info=WORLD_CELL_TYPES[cell.type];
   return `${info.name}: ${info.info} No puedes infectar aquí.`;
 }
+
+function worldBodyMass(entity) {
+  if(entity.kind!=='cell') return 2.4;
+  if(entity.type==='plaqueta') return .35;
+  return Math.max(.8,Math.min(2.8,(entity.diameter/420)**2));
+}

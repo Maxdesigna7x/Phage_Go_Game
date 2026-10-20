@@ -22,3 +22,10 @@
 - La generación usa una bacteria sana, una rota y dos células por bloque de 2×2 posiciones. No seleccionar proporciones independientemente por cada fotograma. Las proporciones visibles cambian al recortar el mundo y al infectarse bacterias.
 - Mantener separación entre posiciones y sus radios visibles. La física reutiliza cuerpos que siguen en la vecindad activa, pero no conserva indefinidamente elementos de regiones lejanas.
 - La brújula solo apunta a `isBacteriaInteractable`. El glow rojo de un elemento incompatible no debe habilitar Infectar. Las ayudas del ensamblaje siguen usando su glow dorado y su lógica de origen/destino.
+
+## Macrófago de modo difícil
+
+- `enemies.js` mantiene una única amenaza cercana, solo en difícil. La captura se anuncia y exige permanencia en la copa; nunca habilitar Infectar ni incluir enemigos en la brújula.
+- Originales en `assets/macrofago/`; distribución en `assets_webp/macrofago/`. Reposo, apertura y cierre comparten lienzo **1254×1254**; conservar posiciones y alfa. Regenerar `world-shapes.js` tras cambiar fases. El generador incluye esa carpeta.
+- El enemigo empuja células y bacterias con fuerza y velocidad limitadas; `targetBacteria` permanece anclada. Conservar las identidades y posiciones de los cuerpos dentro de la vecindad activa y los restos de una bacteria desplazada al completar su ciclo.
+- Acople, inyección, minijuegos, lisis y escape suspenden la amenaza; el regreso al vuelo concede protección. Game Over debe funcionar con teclado, ratón y toque, y limpiar enemigos al regresar al menú.
