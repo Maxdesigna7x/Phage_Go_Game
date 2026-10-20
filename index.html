@@ -4,19 +4,19 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Phage-Go!</title>
-    <meta name="app-version" content="2026.10.20-51">
-    <link rel="preload" as="image" type="image/webp" href="assets_webp/Intro_back_V2.webp?v=20261020-43" media="(orientation: landscape)" fetchpriority="high">
-    <link rel="preload" as="image" type="image/webp" href="assets_webp/Story.webp?v=20261020-43" media="(orientation: portrait)" fetchpriority="high">
+    <meta name="app-version" content="2026.10.20-52">
+    <link rel="preload" as="image" type="image/webp" href="assets_webp/Intro_back_V2.webp?v=20261020-52" media="(orientation: landscape)" fetchpriority="high">
+    <link rel="preload" as="image" type="image/webp" href="assets_webp/Story.webp?v=20261020-52" media="(orientation: portrait)" fetchpriority="high">
     <link rel="icon" href="data:,">
-    <link rel="stylesheet" href="style.css?v=20261020-43">
+    <link rel="stylesheet" href="style.css?v=20261020-52">
   </head>
   <body>
     <main id="app">
       <div id="playfield">
       <canvas tabindex="-1" id="game" width="1600" height="900" aria-label="Phage-Go juego del ciclo lítico"></canvas>
       <picture>
-      <source media="(orientation: portrait)" srcset="assets_webp/Story.webp?v=20261020-43">
-      <img id="loadingBackdrop" src="assets_webp/Intro_back_V2.webp?v=20261020-43" alt="" fetchpriority="high" decoding="async" draggable="false">
+      <source media="(orientation: portrait)" srcset="assets_webp/Story.webp?v=20261020-52">
+      <img id="loadingBackdrop" src="assets_webp/Intro_back_V2.webp?v=20261020-52" alt="" fetchpriority="high" decoding="async" draggable="false">
       </picture>
       <div id="safeAreaProbe" aria-hidden="true"></div>
       <div id="canvasControls"></div>
@@ -24,10 +24,10 @@
       <div id="loading" role="status" aria-live="polite"><span id="loadingStatus">Cargando imágenes…</span><button id="retryLoadingButton" class="hidden" type="button">Reintentar</button></div>
       <div id="menuButtons" class="menu-buttons">
         <button id="normalButton" class="menu-icon-button" type="button" disabled data-label="Fácil" aria-label="Modo fácil">
-          <img src="assets_webp/phage_easy.webp?v=20261020-43" alt="">
+          <img src="assets_webp/phage_easy.webp?v=20261020-52" alt="">
         </button>
         <button id="hardButton" class="menu-icon-button" type="button" disabled data-label="Difícil" aria-label="Modo difícil">
-          <img src="assets_webp/phage_hard.webp?v=20261020-43" alt="">
+          <img src="assets_webp/phage_hard.webp?v=20261020-52" alt="">
         </button>
       </div>
       <button id="restartButton" class="text-button hidden" type="button">Reiniciar</button>
@@ -61,12 +61,12 @@
       <div id="soundList"></div>
       <footer><button id="soundSave" type="button">Guardar y exportar JSON</button><p id="soundStatus" role="status"></p></footer>
     </dialog>
-    <script src="audio/catalog.js?v=20261020-43"></script>
-    <script src="audio/sound.js?v=20261020-43"></script>
-    <script src="world-shapes.js?v=20261020-43"></script>
-    <script src="world.js?v=20261020-43"></script>
-    <script src="enemies.js?v=20261020-43"></script>
-    <script src="controls.js?v=20261020-51"></script>
-    <script src="game.js?v=20261020-51"></script>
+    <script src="audio/catalog.js?v=20261020-52"></script>
+    <script src="audio/sound.js?v=20261020-52"></script>
+    <script src="world-shapes.js?v=20261020-52"></script>
+    <script src="world.js?v=20261020-52"></script>
+    <script src="enemies.js?v=20261020-52"></script>
+    <script src="controls.js?v=20261020-52"></script>
+    <script src="game.js?v=20261020-52"></script>
   </body>
 </html>
