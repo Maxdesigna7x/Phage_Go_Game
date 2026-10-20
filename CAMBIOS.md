@@ -16,6 +16,15 @@ Verificación: 30 pruebas automatizadas; revisión visual en 1024×768 y 844×39
 Publicación: GitHub Pages desde `main` en https://maxdesigna7x.github.io/Phage_Go_Game/
 
 
+# Manos tutoriales y marcador de difícil — 20 de octubre de 2026
+
+- Las manos permanecen visibles durante toques y arrastres y durante todo el ciclo de animación. Cada tutorial pendiente reinicia su animación al comenzar una partida nueva.
+- El marcador de difícil muestra únicamente la bacteria rota, el reloj y sus valores en texto grande; se elimina la tarjeta de fondo.
+- `clock.png` y `Bacteria_Background_7.png` se distribuyen como WebP RGBA con dimensiones y alfa conservados.
+- Verificación: cobertura automatizada de los diez gestos en móvil y escritorio, más validación de las dimensiones y transparencia de ambos iconos.
+- Versión de `game.js` y referencias de recursos actualizadas a `20261020-40`.
+
+
 # Tutorial visual — 20 de octubre de 2026
 
 - Punteros originales `pointing_pulse_on/off` convertidos a WebP con lienzo y alfa intactos.

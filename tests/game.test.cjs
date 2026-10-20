@@ -763,6 +763,21 @@ test('all loaded sprites are WebP, including both nucleotide slots and draggable
   const {run}=game();
   assert.equal(run(`Object.values(ASSETS).every(path=>path.startsWith('assets_webp/') && path.endsWith('.webp'))`),true);
   assert.equal(run(`['A','T','C','G'].every(code=>getNucleotideImage(code)===img['nuc'+code] && ASSETS['nuc'+code].endsWith('.webp'))`),true);
+  assert.equal(run(`ASSETS.bg7==='assets_webp/Bacteria_Background_7.webp'&&ASSETS.clock==='assets_webp/clock.webp'`),true);
+  assert.ok(fs.existsSync(require('node:path').join(__dirname, '../assets_webp/clock.webp')));
+});
+
+test('hard-mode score uses large bacteria and clock icons without a background card', () => {
+  const {run}=game();
+  assert.equal(run(`(()=>{
+    img.bg7={width:232,height:284};img.clock={width:512,height:512};
+    const images=[],labels=[];let panels=0;
+    ctx.drawImage=image=>images.push(image);
+    drawText=(text)=>labels.push(text);
+    drawPanel=()=>panels++;
+    score=123;hardModeElapsed=9000;drawHardModeHud();
+    return images[0]===img.bg7&&images[1]===img.clock&&labels[0]==='123'&&labels[1]==='9:51'&&panels===0;
+  })()`),true);
 });
 
 test('biosynthesis progress is below the cell and above the footer explanation', () => {
@@ -1567,6 +1582,15 @@ test('tutorial progress persists only learned actions and survives unavailable s
   assert.equal(denied.run('visualTutorial.learned.movement'),true);
 });
 
+test('a new game restarts unfinished tutorial timing without clearing learned actions', () => {
+  const {run}=game();
+  assert.equal(run(`(()=>{
+    visualTutorial.learned={nucleotide:true};visualTutorial.key='movement-v2';visualTutorial.age=5.9;visualTutorial.movementInputSeen=true;
+    launchGame(GameMode.NORMAL);
+    return visualTutorial.key===null&&visualTutorial.age===0&&!visualTutorial.movementInputSeen&&visualTutorial.learned.nucleotide===true;
+  })()`),true);
+});
+
 test('tutorial drawing never moves letters or assembly pieces or generates inputs', () => {
   const {run}=game();
   assert.equal(run(`(()=>{
@@ -1617,6 +1641,61 @@ test('mobile always sees the first movement demonstration before a nearby infect
     for(let i=0;i<390;i++){updateVisualTutorial(1/60);drawVisualTutorial();}
     if(drawn===0||!visualTutorial.learned['movement-v2'])return false;
     return getTutorialCue()?.key==='infection';
+  })()`),true);
+});
+
+test('every tutorial gesture stays visible on desktop and mobile, including during active input', () => {
+  const {run}=game();
+  const results=JSON.parse(run(`(()=>{
+    const output=[];
+    const lessons=['movement-v2','infection','injection','dna-copy','dna-process','nucleotide','assembly-genome','assembly-head','assembly-body','lysis'];
+    for(const mobile of [false,true]) {
+      mobileControls=mobile;launchGame(GameMode.NORMAL);
+      for(const lesson of lessons) {
+        visualTutorial.learned=lesson==='movement-v2'?{}:{'movement-v2':true};visualTutorial.key=null;visualTutorial.age=0;visualTutorial.movementInputSeen=false;
+        nucleotideGame=null;replication.dnaPieces=[];assembly.activeParts=[];assembly.packed=false;assembly.joining={headBody:false,bodyLegs:false};
+        targetBacteria=null;attachCandidate=null;infectionPointer=null;lysis.burst=false;
+        if(lesson==='movement-v2') state=State.SEARCH;
+        if(lesson==='infection') { state=State.SEARCH;attachCandidate=makeBacteria(player.x+220,player.y,1,0,1); }
+        if(lesson==='injection') { state=State.ADSORPTION;targetBacteria=makeBacteria(player.x,player.y,1,0,1); }
+        if(lesson==='dna-copy') { createInitialDnaFromInjection();state=State.DNA_REPLICATION; }
+        if(lesson==='dna-process') { replication.dnaPieces=Array.from({length:TARGET_DNA},(_,i)=>({id:i+1,x:500+i*20,y:450,duplicated:true,processed:false}));state=State.DNA_REPLICATION; }
+        if(lesson==='nucleotide') { createInitialDnaFromInjection();nucleotideGame=createNucleotideGame(replication.dnaPieces[0]);state=State.NUCLEOTIDE_MINIGAME; }
+        if(lesson.startsWith('assembly-')) {
+          createPhagePartsFromDna({id:1});state=State.PART_ASSEMBLY;
+          if(lesson==='assembly-head') assembly.packed=true;
+          if(lesson==='assembly-body') { assembly.packed=true;assembly.joining.headBody=true; }
+        }
+        if(lesson==='lysis') state=State.LYSIS;
+        mouse.down=true;dragItem={kind:'nucleotide'};
+        updateVisualTutorial(1/60);
+        const cue=getTutorialCue();let draws=0;ctx.drawImage=()=>draws++;
+        drawVisualTutorial();
+        output.push({mobile,lesson,cue:cue?.key,draws});
+        mouse.down=false;dragItem=null;infectionPointer=null;
+      }
+    }
+    return JSON.stringify(output);
+  })()`));
+  assert.equal(results.length,20);
+  for(const result of results) {
+    assert.equal(result.cue,result.lesson,`${result.mobile?'mobile':'desktop'} ${result.lesson} cue`);
+    assert.ok(result.draws>0,`${result.mobile?'mobile':'desktop'} ${result.lesson} hand was not drawn`);
+  }
+});
+
+test('repeating movement and drag demonstrations never fade completely between gestures', () => {
+  const {run}=game();
+  assert.equal(run(`(()=>{
+    let minimumAlpha=1;
+    visualTutorial.learned={};visualTutorial.key='movement-v2';state=State.SEARCH;
+    for(let i=0;i<=384;i++) {visualTutorial.age=i/60;drawVisualTutorial();minimumAlpha=Math.min(minimumAlpha,ctx.globalAlpha);}
+    if(minimumAlpha<0.71)return false;
+    visualTutorial.learned={'movement-v2':true};visualTutorial.key='nucleotide';visualTutorial.age=0;
+    createInitialDnaFromInjection();nucleotideGame=createNucleotideGame(replication.dnaPieces[0]);state=State.NUCLEOTIDE_MINIGAME;
+    minimumAlpha=1;
+    for(let i=0;i<=192;i++) {visualTutorial.age=i/60;drawVisualTutorial();minimumAlpha=Math.min(minimumAlpha,ctx.globalAlpha);}
+    return minimumAlpha>=0.71;
   })()`),true);
 });
 

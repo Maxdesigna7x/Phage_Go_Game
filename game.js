@@ -19,7 +19,7 @@ const storyIntroCaption = document.getElementById("storyIntroCaption");
 const displayNotice = document.getElementById("displayNotice");
 const retryLoadingButton = document.getElementById("retryLoadingButton");
 const loadingStatus = document.getElementById("loadingStatus");
-const BUILD_VERSION = "20261020-39";
+const BUILD_VERSION = "20261020-40";
 const STORY_INTRO_FADE_MS = 260;
 const SIMULATION_STEP = 1 / 60;
 const MAX_FRAME_SECONDS = 0.25; // Discard long stalls equally for gameplay and its clocks.
@@ -154,6 +154,7 @@ const ASSETS = {
   bg6: "assets_webp/Bacteria_Background_6.webp",
   bg7: "assets_webp/Bacteria_Background_7.webp",
   bg8: "assets_webp/Bacteria_Background_8.webp",
+  clock: "assets_webp/clock.webp",
   flare: "assets_webp/flare.webp",
   noise: "assets_webp/noise.webp",
   stage0: "assets_webp/Stage_0.webp",
@@ -491,6 +492,9 @@ function launchGame(mode) {
   cellField = [];
   hardModeElapsed = 0;
   poppedBubbles.clear();
+  visualTutorial.key = null;
+  visualTutorial.age = 0;
+  visualTutorial.movementInputSeen = false;
   resetCycleState(50, 50, 0.65);
   camera.x=player.x-W/2; camera.y=player.y-H/2;
   backgroundFields.length = 0;
@@ -2108,11 +2112,12 @@ function drawHardModeHud() {
   const remaining = Math.max(0, HARD_MODE_DURATION_MS - hardModeElapsed);
   const seconds = Math.ceil(remaining / 1000);
   const minutesText = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
-  const x = safeRight(310, SAFE_MARGIN);
+  const x = safeRight(240, SAFE_MARGIN);
   const y = safeY(120);
-  drawPanel(x, y, 310, 96, 0.52);
-  drawTextCentered(`Puntos: ${score}`, x + 155, y + 38, 24, "#ffdd69", "900");
-  drawTextCentered(`Tiempo: ${minutesText}`, x + 155, y + 72, 24, "#fff", "900");
+  drawImageCenter(img.bg7, x + 28, y + 32, 0.19, 0);
+  drawText(`${score}`, x + 65, y + 43, 36, "#ffdd69", "900");
+  drawImageCenter(img.clock, x + 28, y + 90, 0.09, 0);
+  drawText(minutesText, x + 65, y + 101, 36, "#fff", "900");
 }
 
 function drawStageIcons(activeStage, stageName) {
@@ -3210,7 +3215,7 @@ function updateVisualTutorial(dt) {
 
 function drawVisualTutorial() {
   const cue = getTutorialCue();
-  if (!cue || dragItem || mouse.down || infectionPointerHeld()) return;
+  if (!cue) return;
   const age = visualTutorial.age;
   let p = cue.source, pressed = false, alpha = 1;
   if (cue.movement) {
@@ -3221,13 +3226,13 @@ function drawVisualTutorial() {
     const progress = smoothstep(.3,1.1,segment);
     p = { x: p.x+delta[0]*progress, y: p.y+delta[1]*progress };
     pressed = segment>.2 && segment<1.3;
-    alpha = segment>1.3 ? 1-smoothstep(1.3,1.6,segment) : 1;
+    alpha = segment>1.3 ? 1-0.22*smoothstep(1.3,1.6,segment) : 1;
   } else if (cue.drag) {
     const t = age%3.2;
     const progress = smoothstep(.6,2.2,t);
     p = { x: lerp(p.x,cue.target.x,progress), y: lerp(p.y,cue.target.y,progress) };
     pressed = t>.35 && t<2.45;
-    alpha = t>2.65 ? 1-smoothstep(2.65,3.2,t) : 1;
+    alpha = t>2.65 ? 1-0.22*smoothstep(2.65,3.2,t) : 1;
   } else {
     const t = age%(cue.hold ? 3 : .8);
     pressed = cue.hold ? t>.35 && t<2.6 : t>.18 && t<.5;

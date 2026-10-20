@@ -40,6 +40,15 @@ for name in sorted(paths):
         assert len(base64.b64decode(shape['data'])) == shape['w'] * shape['h'], name
         shape_count += 1
 assert shape_count == len(shapes), 'Unused or missing collision shapes'
+for name, size in {
+    'Bacteria_Background_7.webp': (232, 284),
+    'clock.webp': (512, 512),
+}.items():
+    with Image.open(root / 'assets_webp' / name) as image:
+        assert image.format == 'WEBP' and image.mode == 'RGBA', name
+        assert image.size == size, name
+        alpha = image.getchannel('A')
+        assert alpha.getextrema()[0] == 0 and alpha.getbbox(), f'Invalid icon alpha: {name}'
 version = re.search(r'const BUILD_VERSION = "([^"]+)"', source)[1]
 html = (root / 'index.html').read_text()
 for script in ('game.js', 'world.js', 'enemies.js', 'controls.js', 'audio/sound.js', 'style.css'):

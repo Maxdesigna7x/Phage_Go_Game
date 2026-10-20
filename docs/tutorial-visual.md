@@ -29,4 +29,13 @@ Las ayudas son una capa de dibujo: no generan eventos, no arrastran objetos, no 
 
 - El tutorial de movimiento tiene prioridad sobre la infección cercana. En móvil no se oculta al tocar el joystick. Se marca aprendido solo después de que el jugador haya visto el ciclo de cuatro direcciones completo y haya movido el fago; el identificador v2 hace que aparezca incluso a usuarios cuyo guardado anterior la marcó accidentalmente como vista.
 - La última ilustración ahora se desvanece mientras la partida ya corre detrás. El primer fotograma del juego se dibuja antes de quitar la capa de presentación.
-- Todos los recursos de `index.html` usan la versión de caché `20261020-39`.
+- Todos los recursos de `index.html` usan la versión de caché `20261020-40`.
+
+## Persistencia de las manos y marcador de difícil — 2026-10-20
+
+- La mano ya no se oculta mientras se mantiene o se arrastra un elemento. Así permanece visible durante el gesto que está enseñando, también en pantallas táctiles.
+- Los ciclos de movimiento y arrastre conservan una opacidad mínima al cambiar de dirección o volver al origen, sin desaparecer entre gestos.
+- Al iniciar una partida se reinicia el ciclo visual de cualquier tutorial pendiente, sin borrar el progreso aprendido que se guarda localmente.
+- La prueba automatizada recorre movimiento, infección, inyección, ADN, nucleótidos, las tres uniones del fago y lisis tanto en escritorio como en móvil, con la entrada activa.
+- El marcador de difícil usa la bacteria rota y `clock.webp`, con números grandes y sin panel. Los originales y WebP conservan dimensiones y canal alfa.
+- Versión de caché: `20261020-40`.
