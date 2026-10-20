@@ -19,7 +19,7 @@ const storyIntroCaption = document.getElementById("storyIntroCaption");
 const displayNotice = document.getElementById("displayNotice");
 const retryLoadingButton = document.getElementById("retryLoadingButton");
 const loadingStatus = document.getElementById("loadingStatus");
-const BUILD_VERSION = "20261020-41";
+const BUILD_VERSION = "20261020-42";
 const STORY_INTRO_FADE_MS = 260;
 const SIMULATION_STEP = 1 / 60;
 const MAX_FRAME_SECONDS = 0.25; // Discard long stalls equally for gameplay and its clocks.
@@ -312,6 +312,10 @@ async function loadImages() {
         img[key].fallback = true;
       }
     }
+    if (MENU_ASSETS.includes(key) && img.introBack) {
+      drawIntro();
+      document.getElementById('loadingBackdrop').classList.add('hidden');
+    }
     loadingStatus.textContent = `Cargando imágenes… ${++completed}/${entries.length}`;
   };
   const loadGroup = async (group, priority) => {
@@ -322,6 +326,7 @@ async function loadImages() {
     const failed = results.find(result => result.status === 'rejected');
     if (failed) throw failed.reason;
   };
+  // Paint each menu asset as it arrives, even if another menu image is slow.
   await loadGroup(entries.filter(([key]) => MENU_ASSETS.includes(key)), 'high');
   // Paint the actual menu while the remaining assets load; play stays disabled.
   drawIntro();
@@ -1711,7 +1716,7 @@ function expirePoppedBubbles() {
 
 function drawIntro() {
   drawImageCover(img.introBack, 0, 0, W, H);
-  drawImageCenter(img.title, safeCenterX(), safeY(240), 0.56, 0);
+  if (img.title) drawImageCenter(img.title, safeCenterX(), safeY(240), 0.56, 0);
 }
 
 function worldToScreen(x, y) {

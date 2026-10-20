@@ -1734,6 +1734,9 @@ test('presentation input cannot advance or dismiss the first movement tutorial o
 test('image loading paints the menu first and bounds simultaneous downloads', async () => {
   const {run,sandbox}=game();
   run('for(const key of Object.keys(img))delete img[key];');
+  const paints=[];
+  sandbox.recordMenuPaint=()=>paints.push(Array.from(run('Object.keys(img)')));
+  run('drawIntro=recordMenuPaint;');
   const requests=[];let active=0,peak=0;
   sandbox.Image=class {
     constructor(){this.width=this.height=512;}
@@ -1741,6 +1744,8 @@ test('image loading paints the menu first and bounds simultaneous downloads', as
   };
   await run('loadImages()');
   assert.equal(peak,4);
+  assert.ok(paints[0].includes('introBack'));
+  assert.equal(paints[0].includes('title'),false, 'background paints before the title finishes');
   assert.deepEqual(requests.slice(0,4).map(url=>url.split('?')[0]), Array.from(run('MENU_ASSETS.map(key=>ASSETS[key])')));
   assert.ok(requests.findIndex(url=>url.includes('pointing_pulse_on'))<requests.findIndex(url=>url.includes('DNA_broken')));
 });

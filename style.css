@@ -126,11 +126,20 @@ body {
 }
 .display-notice { position: absolute; top: 12%; left: 25%; width: 50%; z-index: 5; padding: 12px; border-radius: 10px; background: #072b40f5; text-align: center; }
 
+#loadingBackdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+
 #loading {
   position: absolute;
   left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
+  bottom: max(24px, env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
   padding: 14px 22px;
   border: 1px solid rgba(190, 234, 241, 0.4);
   border-radius: 8px;
