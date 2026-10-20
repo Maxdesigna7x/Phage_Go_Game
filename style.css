@@ -73,10 +73,19 @@ body {
   background: radial-gradient(circle at 50% 30%, #14586c, #061827 75%);
 }
 .rotate-notice.portrait-mobile {
-  background-image: linear-gradient(180deg, rgba(3, 20, 34, 0.22), rgba(3, 20, 34, 0.48)), var(--portrait-story-background);
+  background-color: #061827;
+  background-image: linear-gradient(180deg, rgba(3, 20, 34, 0.22), rgba(3, 20, 34, 0.48)), url("assets_webp/Story.webp?v=20261020-43");
   background-position: center, center top;
   background-size: 100% 100%, auto 100%;
   background-repeat: no-repeat, no-repeat;
+}
+/* Show the portrait screen before scripts initialize the viewport. */
+.rotate-notice.initial-orientation { display: none; }
+@media (orientation: portrait) {
+  .rotate-notice.initial-orientation {
+    display: flex;
+    background: linear-gradient(180deg, rgba(3, 20, 34, 0.22), rgba(3, 20, 34, 0.48)), url("assets_webp/Story.webp?v=20261020-43") center top / auto 100% no-repeat #061827;
+  }
 }
 .rotate-icon-button {
   display: grid; place-items: center; width: 116px; height: 116px; padding: 0;

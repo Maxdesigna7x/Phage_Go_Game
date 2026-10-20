@@ -19,7 +19,7 @@ const storyIntroCaption = document.getElementById("storyIntroCaption");
 const displayNotice = document.getElementById("displayNotice");
 const retryLoadingButton = document.getElementById("retryLoadingButton");
 const loadingStatus = document.getElementById("loadingStatus");
-const BUILD_VERSION = "20261020-42";
+const BUILD_VERSION = "20261020-43";
 const STORY_INTRO_FADE_MS = 260;
 const SIMULATION_STEP = 1 / 60;
 const MAX_FRAME_SECONDS = 0.25; // Discard long stalls equally for gameplay and its clocks.
@@ -326,13 +326,15 @@ async function loadImages() {
     const failed = results.find(result => result.status === 'rejected');
     if (failed) throw failed.reason;
   };
+  // On portrait entry, finish the visible orientation background before the menu.
+  const portraitEntry = window.innerWidth < window.innerHeight;
+  if (portraitEntry) await loadGroup(entries.filter(([key]) => key === 'story'), 'high');
   // Paint each menu asset as it arrives, even if another menu image is slow.
   await loadGroup(entries.filter(([key]) => MENU_ASSETS.includes(key)), 'high');
   // Paint the actual menu while the remaining assets load; play stays disabled.
   drawIntro();
-  rotateNotice.style.setProperty("--portrait-story-background", `url("${ASSETS.story}?v=${BUILD_VERSION}")`);
   await loadGroup(entries.filter(([key]) => EARLY_ASSETS.includes(key)), 'high');
-  await loadGroup(entries.filter(([key]) => !MENU_ASSETS.includes(key) && !EARLY_ASSETS.includes(key)), 'low');
+  await loadGroup(entries.filter(([key]) => !MENU_ASSETS.includes(key) && !EARLY_ASSETS.includes(key) && !(portraitEntry && key === 'story')), 'low');
 }
 
 
@@ -2900,8 +2902,9 @@ function resizeCanvasToViewport() {
     layers.backgroundStatic = createLayer(); buildStaticBackgroundLayer(); backgroundFields.length = 0;
   }
   const blocked = isDisplayBlocked();
+  rotateNotice.classList.remove("initial-orientation");
   rotateNotice.classList.toggle("hidden", !blocked);
-  rotateNotice.classList.toggle("portrait-mobile", mobileControls && !landscapeReady);
+  rotateNotice.classList.toggle("portrait-mobile", !landscapeReady);
   document.getElementById("orientationTitle").textContent = landscapeReady ? "Pantalla completa" : "Gira tu pantalla";
   document.getElementById("orientationMessage").textContent = landscapeReady
     ? "Toca el botón para jugar a pantalla completa. Tu partida te espera."

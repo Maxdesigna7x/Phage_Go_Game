@@ -1749,3 +1749,17 @@ test('image loading paints the menu first and bounds simultaneous downloads', as
   assert.deepEqual(requests.slice(0,4).map(url=>url.split('?')[0]), Array.from(run('MENU_ASSETS.map(key=>ASSETS[key])')));
   assert.ok(requests.findIndex(url=>url.includes('pointing_pulse_on'))<requests.findIndex(url=>url.includes('DNA_broken')));
 });
+
+test('portrait entry loads its orientation background before menu assets', async () => {
+  const {run,sandbox}=game();
+  run('for(const key of Object.keys(img))delete img[key]; window.innerWidth=390; window.innerHeight=844;');
+  const requests=[];
+  sandbox.Image=class {
+    constructor(){this.width=this.height=512;}
+    set src(url){requests.push(url.split('?')[0]);queueMicrotask(()=>this.onload());}
+  };
+  await run('loadImages()');
+  assert.equal(requests[0],run('ASSETS.story'));
+  assert.equal(requests.filter(url=>url===run('ASSETS.story')).length,1);
+  assert.ok(requests.indexOf(run('ASSETS.introBack'))>0);
+});
