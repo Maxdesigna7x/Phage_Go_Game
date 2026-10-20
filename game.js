@@ -15,7 +15,7 @@ const rotateNotice = document.getElementById("rotateNotice");
 const displayNotice = document.getElementById("displayNotice");
 const retryLoadingButton = document.getElementById("retryLoadingButton");
 const loadingStatus = document.getElementById("loadingStatus");
-const BUILD_VERSION = "20261020-30";
+const BUILD_VERSION = "20261020-31";
 const SIMULATION_STEP = 1 / 60;
 const MAX_FRAME_SECONDS = 0.25; // Discard long stalls equally for gameplay and its clocks.
 let simulationAccumulator = 0;
@@ -45,6 +45,7 @@ const TARGET_PHAGES = 5;
 const SAFE_MARGIN = 24;
 const DOCK_SECONDS = 0.85;
 const INFECTION_REACH = 150;
+const INFECTION_HOLD_SECONDS = 0.65;
 const INTERIOR_SCALE = 1.45;
 const ESCAPE_SECONDS = 2.4;
 const AMBIENT_COUNT = 6;
@@ -99,6 +100,8 @@ const DesktopMovementMode = {
 };
 
 const ASSETS = {
+  pointingOn: "assets_webp/pointing_pulse_on.webp",
+  pointingOff: "assets_webp/pointing_pulse_off.webp",
   introBack: "assets_webp/Intro_back_V2.webp",
   macrofago_idle: "assets_webp/macrofago/macrofago_idle.webp",
   macrofago_reach: "assets_webp/macrofago/macrofago_reach.webp",
@@ -177,6 +180,7 @@ let targetBacteria = null;
 let attachPose = null;
 let attachCandidate = null;
 let attachTimer = 0;
+let infectionPointer = null;
 let injectionProgress = 0;
 let dragItem = null;
 let spaceWasDown = false;
@@ -216,9 +220,9 @@ const glowSprites = {};
 const poppedBubbles = new Map();
 
 const stageInfo = {
-  [State.SEARCH]: ["Adsorción", 1, "Rota y propulsa el fago. Acopla las patas a una bacteria."],
-  [State.ADSORPTION]: ["Adsorción", 1, "Fago adherido. Pulsa ESPACIO para iniciar la inyección."],
-  [State.INJECTION]: ["Inyección", 2, "Mantén ESPACIO para inyectar el ADN."],
+  [State.SEARCH]: ["Adsorción", 1, "Toca y desliza para moverte. Mantén pulsada una bacteria cercana para infectarla."],
+  [State.ADSORPTION]: ["Adsorción", 1, "Mantén pulsada la bacteria para iniciar la inyección; también puedes usar ESPACIO."],
+  [State.INJECTION]: ["Inyección", 2, "Mantén pulsada la bacteria o ESPACIO para inyectar el ADN."],
   [State.DNA_REPLICATION]: ["Replicación", 3, "Selecciona el ADN para duplicarlo o procesarlo."],
   [State.NUCLEOTIDE_MINIGAME]: ["Nucleótidos", 4, "Selecciona un nucleótido y su destino, o arrástralo a su misma letra."],
   [State.BIOSYNTHESIS]: ["Fabricación", 4, "La bacteria fabrica las piezas del fago."],
@@ -625,6 +629,7 @@ function setState(next) {
   cancelGenericPointer();
   if (next === State.INJECTION && targetBacteria) infectionView = { camera: { ...camera }, rotation: targetBacteria.rotation };
   const previous = state;
+  if (![State.SEARCH, State.ADSORPTION, State.INJECTION].includes(next)) infectionPointer = null;
   state = next;
   const soundByState = { [State.ADSORPTION]: "infeccion_acercamiento", [State.NUCLEOTIDE_MINIGAME]: "adn_seleccionar",
     [State.BIOSYNTHESIS]: "adn_secuencia_completa", [State.PART_ASSEMBLY]: "pieza_aparecer",
@@ -718,6 +723,7 @@ function update(dt, spaceDown, actionTaps = spaceTap ? 1 : 0) {
   if (toastTimer > 0) toastTimer -= dt;
   expirePoppedBubbles();
   updateParticles(dt);
+  updateVisualTutorial(dt);
   if (replication.messageTimer > 0) replication.messageTimer -= dt;
   if (assembly.messageTimer > 0) assembly.messageTimer -= dt;
 
@@ -789,7 +795,17 @@ function updateSearch(dt) {
   }
 
   if (attachCandidate && !previousCandidate) playSound("bacteria_disponible", {volume:0.3});
-  if (attachCandidate && (isActionHeld() || spaceTap)) {
+  // A pointer owns one bacterium; dragging across another cannot transfer a hold.
+  if (infectionPointer) {
+    const b = infectionPointer.bacteria;
+    const valid = isBacteriaInteractable(b) && canAttachToBacteria(player, b).valid && infectionPointerHeld();
+    infectionPointer.elapsed = valid ? infectionPointer.elapsed + dt : 0;
+    if (valid) attachCandidate = b;
+  }
+  const pointerReady = infectionPointer && infectionPointer.elapsed >= INFECTION_HOLD_SECONDS;
+  const keyboardAction = keys.has(" ") || keys.has("Spacebar") || semanticActionKey !== null;
+  if (attachCandidate && (pointerReady || keyboardAction)) {
+    learnTutorial("infection");
     clearBubbleEnergy();
     targetBacteria = attachCandidate;
     attachPose = getDockPose(player, targetBacteria);
@@ -830,6 +846,7 @@ function updateInjection(dt, spaceDown) {
   camera.y = lerp(infectionView.camera.y, targetBacteria.y - H * 0.52 / zoom, t);
   if (spaceDown) injectionProgress = clamp(injectionProgress + dt * 0.36, 0, 1);
   if (injectionProgress >= 1) {
+    learnTutorial("injection");
     targetBacteria.rotation = 0;
     createInitialDnaFromInjection();
     setState(State.DNA_REPLICATION);
@@ -871,6 +888,7 @@ function activateDna(dna) {
   if (replication.dnaPieces.length < TARGET_DNA && !dna.duplicated) {
     spawnDnaCopy(dna);
     dna.duplicated = true;
+    learnTutorial("dna-copy");
     sayReplication(`ADN duplicado ${replication.dnaPieces.length}/${TARGET_DNA}`);
     return;
   }
@@ -882,6 +900,7 @@ function activateDna(dna) {
     sayReplication("Ese ADN ya produjo un fago.");
     return;
   }
+  learnTutorial("dna-process");
   nucleotideGame = createNucleotideGame(dna);
   setState(State.NUCLEOTIDE_MINIGAME);
 }
@@ -963,6 +982,7 @@ function dropNucleotideOnSlot(item) {
     if (Math.hypot(item.x - slot.x, item.y - slot.y) < 72) {
       if (item.code === slot.code) {
         slot.filled = true;
+        learnTutorial("nucleotide");
         matched = true;
         playSound("nucleotido_encajar");
         spawnParticle(slot.x, slot.y, "#9be8ff", 16);
@@ -1042,6 +1062,7 @@ function trySnapParts() {
     const genome = assembly.activeParts.find(p => p.kind === "genome");
     if (genome && Math.hypot(genome.x - head.x, genome.y - head.y) < 90) {
       assembly.packed = true;
+      learnTutorial("assembly-genome");
       playSound("adn_empaquetar");
       assembly.activeParts = assembly.activeParts.filter(p => p !== genome);
       spawnParticle(head.x, head.y, "#ffdd69", 20);
@@ -1055,6 +1076,7 @@ function trySnapParts() {
 
   if (!assembly.joining.headBody && Math.hypot(head.x - body.x, head.y - body.y) < 75) {
     assembly.joining.headBody = true;
+    learnTutorial("assembly-head");
     playSound("fago_unir_cabeza_cuerpo");
     const cx = (head.x + body.x) / 2;
     const cy = (head.y + body.y) / 2;
@@ -1067,6 +1089,7 @@ function trySnapParts() {
 
   if (assembly.joining.headBody && !assembly.joining.bodyLegs && Math.hypot(body.x - legs.x, body.y - legs.y) < 85) {
     assembly.joining.bodyLegs = true;
+    learnTutorial("assembly-body");
     playSound("fago_unir_fibras");
     completePhageFromParts(body.x + (177 - 170) * ASSEMBLY_PHASE_SCALE, body.y + (234.5 - 280) * ASSEMBLY_PHASE_SCALE);
   } else if (!assembly.joining.headBody && Math.hypot(head.x - legs.x, head.y - legs.y) < 75) {
@@ -1105,6 +1128,7 @@ function updateLysis(dt, taps = spaceTap ? 1 : 0) {
   if (Math.floor(lysis.damageProgress*5)>previousDamage) playSound("lisis_deterioro", {volume:0.4});
   if (lysis.damageProgress >= 1 && !lysis.burst) {
     lysis.burst = true;
+    learnTutorial("lysis");
     playSound("bacteria_explotar");
     playSound("fagos_liberar", {volume:0.35});
     lysis.burstStartedAt = worldTime * 1000;
@@ -1262,6 +1286,7 @@ function render(dt) {
   if (stageInfo[state]) drawHud();
   registerMinigameControls();
   syncSemanticControls();
+  drawVisualTutorial();
 }
 
 function buildDepthSprites() {
@@ -1925,14 +1950,14 @@ function drawComplete() {
 function drawHud() {
   const [name, stage, objective] = stageInfo[state];
   let instruction = objective;
-  if (state === State.SEARCH) instruction = "Acércate a una bacteria sana brillante y pulsa ESPACIO para adherirte.";
+  if (state === State.SEARCH) instruction = "Acércate y mantén pulsada una bacteria sana brillante para adherirte.";
   if (state === State.SEARCH && mobileControls) instruction = attachCandidate
-    ? "Pulsa Adherirse para posarte en la bacteria."
+    ? "Mantén el dedo sobre la bacteria para adherirte."
     : "Toca y desliza para moverte. Busca una bacteria brillante.";
   if (state === State.ADSORPTION && attachTimer < DOCK_SECONDS) instruction = "El fago se está posando sobre la bacteria…";
   if (state === State.PART_ASSEMBLY) instruction = "Guarda el ADN y ensambla las piezas.";
   if (state === State.LYSIS) instruction = "¡Pulsa muchas veces! La barra no retrocede.";
-  const objectiveText = mobileControls ? instruction.replaceAll("ESPACIO", "el botón") : instruction;
+  const objectiveText = instruction;
   const objectiveX = safeX(SAFE_MARGIN);
   const objectiveY = safeY(SAFE_MARGIN);
   if (![State.DNA_REPLICATION, State.NUCLEOTIDE_MINIGAME, State.BIOSYNTHESIS, State.PART_ASSEMBLY].includes(state)) {
@@ -1957,11 +1982,7 @@ function drawHud() {
     else if (state !== State.NUCLEOTIDE_MINIGAME) drawTopToast(toastMessage);
   }
 
-  if (state === State.SEARCH && attachCandidate) {
-    drawActionPrompt(actionPromptText());
-  } else if (state === State.ADSORPTION || state === State.INJECTION) {
-    drawActionPrompt(actionPromptText());
-  }
+  if ([State.SEARCH, State.ADSORPTION, State.INJECTION].includes(state)) drawInfectionControl();
   if (state === State.SEARCH && !mobileControls) drawDesktopMovementCard();
 }
 
@@ -2785,7 +2806,7 @@ function handleUiPointerDown(p, pointerId) {
 }
 
 function handleMobileControlPointerDown(p, pointerId) {
-  if (!mobileControls || state !== State.SEARCH) return false;
+  if (state !== State.SEARCH) return false;
   const joy = touchControls.joystick;
   // The first finger owns movement until release; other fingers can use actions.
   if (joy.active) return true;
@@ -2798,6 +2819,7 @@ function handleMobileControlPointerDown(p, pointerId) {
 }
 
 function releaseControlPointer(pointerId) {
+  if (infectionPointer?.id === pointerId) { infectionPointer = null; return true; }
   if (touchControls.joystick.pointerId === pointerId) {
     resetJoystick();
     return true;
@@ -2830,6 +2852,7 @@ function resetJoystick() {
 }
 
 function resetTouchControls() {
+  infectionPointer = null;
   resetJoystick();
   touchControls.actionDown = false;
   touchControls.actionPointerId = null;
@@ -2838,7 +2861,7 @@ function resetTouchControls() {
 function getMovementInput() {
   const joy = touchControls.joystick;
   const joyLen = Math.hypot(joy.dx, joy.dy);
-  if (mobileControls && joy.active && joyLen > 10) {
+  if (joy.active && joyLen > 10) {
     const strength = clamp(joyLen / joy.radius, 0, 1);
     return {
       mobileActive: true,
@@ -2936,8 +2959,144 @@ function cancelGenericPointer(pointerId = mouse.pointerId) {
   }
 }
 
+// Pointer interaction uses the same precomputed silhouette as world collisions.
+// During injection it follows the displayed rotation and zoom, not the old world pose.
+function infectionScreenEntity(b) {
+  if (state === State.INJECTION && b === targetBacteria && infectionView) {
+    return { ...b, ...getInfectionPose() };
+  }
+  return { ...b, ...worldToScreen(b.x, b.y), scale: b.scale * (camera.zoom || 1) };
+}
+
+function hitsInfectionBacteria(b, point) {
+  return Boolean(b && isBacteriaInteractable(b) && spriteSurface(infectionScreenEntity(b), point)?.distance <= 0);
+}
+
+function infectionPointerHeld() {
+  return Boolean(infectionPointer && [State.SEARCH, State.ADSORPTION, State.INJECTION].includes(state)
+    && hitsInfectionBacteria(infectionPointer.bacteria, infectionPointer));
+}
+
+function handleInfectionPointerDown(p, id) {
+  if (![State.SEARCH, State.ADSORPTION, State.INJECTION].includes(state)) return false;
+  if (infectionPointer) return true;
+  const b = state === State.SEARCH
+    ? bacteriaField.find(b => canAttachToBacteria(player, b).valid && hitsInfectionBacteria(b, p))
+    : targetBacteria;
+  if (!hitsInfectionBacteria(b, p)) return false;
+  infectionPointer = { id, bacteria: b, x: p.x, y: p.y, elapsed: 0 };
+  // Holding the target stops movement, including an existing movement finger.
+  resetJoystick();
+  return true;
+}
+
+function drawInfectionControl() {
+  const b = state === State.SEARCH ? attachCandidate : targetBacteria;
+  if (!b) return;
+  const view = infectionScreenEntity(b);
+  const radius = Math.min(220, BACTERIA_BODY_WIDTH * view.scale * 0.4);
+  registerSemanticControl('action', view.x-radius, view.y-radius/2, radius*2, radius,
+    state === State.SEARCH ? 'Mantén ESPACIO o Enter para adherirte a esta bacteria' : 'Mantén ESPACIO o Enter para inyectar ADN', () => {});
+  if (state === State.SEARCH && infectionPointer?.elapsed > 0) {
+    drawProgress(view.x-90, view.y+45, 180, 14, infectionPointer.elapsed/INFECTION_HOLD_SECONDS, '#9be8ff');
+  }
+}
+
+const TUTORIAL_STORAGE_KEY = 'phage-go-tutorial-v1';
+function readTutorialProgress() {
+  try {
+    const value = JSON.parse(window.localStorage?.getItem(TUTORIAL_STORAGE_KEY) || '{}');
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  } catch { return {}; }
+}
+const visualTutorial = { learned: readTutorialProgress(), key: null, age: 0, movementTime: 0 };
+function learnTutorial(key) {
+  if (visualTutorial.learned[key] === true) return;
+  visualTutorial.learned[key] = true;
+  try { window.localStorage?.setItem(TUTORIAL_STORAGE_KEY, JSON.stringify(visualTutorial.learned)); } catch { /* Session progress still works. */ }
+}
+
+function getTutorialCue() {
+  const tap = (key, p, hold = false) => ({ key, source: p, target: p, hold });
+  let cue = null;
+  if (state === State.SEARCH) {
+    if (attachCandidate) cue = tap('infection', worldToScreen(attachCandidate.x, attachCandidate.y), true);
+    else cue = { key: 'movement', movement: true, source: { x: safeCenterX()+Math.min(190, W*.14), y: H*.63 } };
+  } else if ([State.ADSORPTION, State.INJECTION].includes(state) && targetBacteria) {
+    cue = tap('injection', infectionScreenEntity(targetBacteria), true);
+  } else if (state === State.DNA_REPLICATION) {
+    const copying = replication.dnaPieces.length < TARGET_DNA;
+    const dna = replication.dnaPieces.find(d => copying ? !d.duplicated : !d.processed);
+    if (dna) cue = tap(copying ? 'dna-copy' : 'dna-process', dna);
+  } else if (state === State.NUCLEOTIDE_MINIGAME && nucleotideGame) {
+    const slot = nucleotideGame.slots.find(s => !s.filled);
+    const item = slot && nucleotideGame.nucleotides.find(n => n.code === slot.code);
+    if (item) cue = { key: 'nucleotide', source: item, target: slot, drag: true };
+  } else if (state === State.PART_ASSEMBLY) {
+    const hint = getAssemblyHint();
+    const source = assembly.activeParts.find(p => p.kind === hint.source);
+    const target = assembly.activeParts.find(p => p.kind === hint.target);
+    if (source && target) {
+      // The joined body is drawn with its anchor below the visible head/body centre.
+      const from = getPartAppearance(source);
+      const to = getPartAppearance(target);
+      if (from && to) cue = { key: `assembly-${hint.source}`, source: from, target: to, drag: true };
+    }
+  } else if (state === State.LYSIS && !lysis.burst) {
+    cue = tap('lysis', { x: W*.5, y: H*.52 });
+  }
+  return cue && visualTutorial.learned[cue.key] !== true ? cue : null;
+}
+
+function updateVisualTutorial(dt) {
+  if (state === State.SEARCH && !visualTutorial.learned.movement) {
+    const movement = getMovementInput();
+    const moving = movement.mobileActive || movement.simpleActive || movement.left || movement.right || movement.up || movement.down;
+    visualTutorial.movementTime = moving ? visualTutorial.movementTime+dt : 0;
+    if (visualTutorial.movementTime >= 0.8) learnTutorial('movement');
+  }
+  const cue = getTutorialCue();
+  if (cue?.key !== visualTutorial.key) { visualTutorial.key = cue?.key || null; visualTutorial.age = 0; }
+  else visualTutorial.age += dt;
+}
+
+function drawVisualTutorial() {
+  const cue = getTutorialCue();
+  if (!cue || dragItem || mouse.down || touchControls.joystick.active || infectionPointerHeld()) return;
+  const age = visualTutorial.age;
+  let p = cue.source, pressed = false, alpha = 1;
+  if (cue.movement) {
+    const t = age % 6.4;
+    const direction = Math.floor(t/1.6);
+    const segment = t%1.6;
+    const delta = [[95,0],[0,-95],[-95,0],[0,95]][direction];
+    const progress = smoothstep(.3,1.1,segment);
+    p = { x: p.x+delta[0]*progress, y: p.y+delta[1]*progress };
+    pressed = segment>.2 && segment<1.3;
+    alpha = segment>1.3 ? 1-smoothstep(1.3,1.6,segment) : 1;
+  } else if (cue.drag) {
+    const t = age%3.2;
+    const progress = smoothstep(.6,2.2,t);
+    p = { x: lerp(p.x,cue.target.x,progress), y: lerp(p.y,cue.target.y,progress) };
+    pressed = t>.35 && t<2.45;
+    alpha = t>2.65 ? 1-smoothstep(2.65,3.2,t) : 1;
+  } else {
+    const t = age%(cue.hold ? 3 : .8);
+    pressed = cue.hold ? t>.35 && t<2.6 : t>.18 && t<.5;
+  }
+  const image = pressed ? img.pointingOn : img.pointingOff;
+  if (!image) return;
+  // Both source frames share 399x434, including their original transparent margins.
+  // Use a common fingertip anchor rather than trimming/centering each silhouette.
+  const scale = .30;
+  ctx.save();
+  ctx.globalAlpha = alpha*.92;
+  ctx.drawImage(image, p.x-340*scale, p.y-40*scale, image.width*scale, image.height*scale);
+  ctx.restore();
+}
+
 function frameAlpha(alpha60, dt) { return 1 - Math.pow(1-alpha60, dt*60); }
-function isActionHeld() { return keys.has(' ') || keys.has('Spacebar') || touchControls.actionDown || semanticActionKey !== null; }
+function isActionHeld() { return infectionPointerHeld() || keys.has(' ') || keys.has('Spacebar') || touchControls.actionDown || semanticActionKey !== null; }
 
 function rand(min, max) {
   return min + Math.random() * (max - min);
@@ -2992,7 +3151,7 @@ canvas.addEventListener("pointerdown", ev => {
     return;
   }
   const pointerState = state;
-  if (handleUiPointerDown(p, ev.pointerId) || handleMobileControlPointerDown(p, ev.pointerId)) {
+  if (handleUiPointerDown(p, ev.pointerId) || handleInfectionPointerDown(p, ev.pointerId) || handleMobileControlPointerDown(p, ev.pointerId)) {
     if (state === pointerState) canvas.setPointerCapture(ev.pointerId);
     ev.preventDefault();
     return;
@@ -3008,6 +3167,12 @@ canvas.addEventListener("pointerdown", ev => {
 
 canvas.addEventListener("pointermove", ev => {
   const p = screenToCanvas(ev);
+  if (infectionPointer?.id === ev.pointerId) {
+    infectionPointer.x = p.x; infectionPointer.y = p.y;
+    if (!infectionPointerHeld()) infectionPointer.elapsed = 0;
+    ev.preventDefault();
+    return;
+  }
   if (touchControls.joystick.active && touchControls.joystick.pointerId === ev.pointerId) {
     updateJoystickFromPoint(p);
     ev.preventDefault();

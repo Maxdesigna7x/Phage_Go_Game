@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 
-function game(effects) {
+function game(effects, storage) {
   const listeners = {};
   const nodes = {};
   const gradient = { addColorStop() {} };
@@ -13,6 +13,7 @@ function game(effects) {
   }
   const sandbox = { console, performance: { now: () => sandbox.now }, now: 1000, document: { hidden: false, getElementById: node, createElement: () => node('cache' + Math.random()), addEventListener(event, handler) { listeners['document:' + event] = handler; } }, window: { innerWidth: 1280, innerHeight: 720, matchMedia: () => ({ matches: false }), addEventListener(event, handler) { listeners['window:' + event] = handler; } }, navigator: { maxTouchPoints: 0, userAgent: '' }, requestAnimationFrame() {}, setTimeout: () => 1, clearTimeout() {} };
   if (effects) sandbox.window.SFX=effects;
+  if (storage) sandbox.window.localStorage=storage;
   // Keep gameplay fixtures reproducible; seed tests override this explicitly.
   sandbox.Math=Object.create(Math);
   sandbox.Math.random=()=>.25;
@@ -520,28 +521,25 @@ test('mobile browsers supporting fullscreen pause until fullscreen is entered', 
 });
 
 
-test('infection prompt is the single centred action on desktop and mobile; release stops injection', () => {
+test('infection uses the bacterium silhouette, retains keyboard access and has no action button', () => {
   const { run, listeners } = game();
   for (const mobile of [false, true]) {
-    run(`mobileControls=${mobile}; startGame(GameMode.NORMAL); attachCandidate=bacteriaField.find(isBacteriaInteractable); targetBacteria=attachCandidate;`);
-    for (const state of ['SEARCH', 'ADSORPTION', 'INJECTION']) {
-      run(`setState(State.${state}); beginUiFrame(); drawHud();`);
-      assert.equal(run('uiButtons.filter(b=>b.id==="action").length'), 1);
-      assert.equal(run('(() => { const b=uiButtons.find(b=>b.id==="action"); return b.x+b.w/2===safeCenterX() && b.y===safeBottom(70, SAFE_MARGIN+18); })()'), true);
+    run(`mobileControls=${mobile}; startGame(GameMode.NORMAL);
+      targetBacteria=makeBacteria(800,450,.9,.2,1); attachCandidate=targetBacteria;
+      attachPose=getDockPose(player,targetBacteria); attachPose.start={...player};`);
+    for (const phase of ['SEARCH', 'ADSORPTION', 'INJECTION']) {
+      run(`setState(State.${phase}); beginUiFrame(); drawHud();`);
+      assert.equal(run('uiButtons.some(b=>b.id==="action")'), false);
+      assert.equal(run('semanticFrame.some(b=>b.id==="action")'), true);
     }
-    run(`{ const action=uiButtons.find(b=>b.id==='action'); handleUiPointerDown({x:action.x+10,y:action.y+10},7); }`);
-    assert.equal(run('touchControls.actionDown'), true);
-    run('injectionProgress=0; updateInjection(0.5,touchControls.actionDown);');
+    run(`{ const p=infectionScreenEntity(targetBacteria); handleInfectionPointerDown(p,7); }
+      injectionProgress=0; updateInjection(.5,isActionHeld());`);
     const progress=run('injectionProgress');
     assert.ok(progress>0);
     listeners['game:pointerup']({pointerId:7});
-    assert.equal(run('touchControls.actionDown'), false);
-    run('updateInjection(0.5,touchControls.actionDown);');
+    assert.equal(run('infectionPointer'), null);
+    run('updateInjection(.5,isActionHeld());');
     assert.equal(run('injectionProgress'), progress);
-    run('state=State.SEARCH; attachCandidate=null; beginUiFrame(); drawHud();');
-    assert.equal(run('uiButtons.some(b=>b.id==="action")'), false);
-    run('state=State.LYSIS; beginUiFrame(); drawHud();');
-    assert.equal(run('uiButtons.some(b=>b.id==="action")'), false);
   }
 });
 
@@ -1505,5 +1503,102 @@ test('the warning strengthens nearby and disappears when far, protected or outsi
       if(macrophageEdgeWarning()) return false;
     }
     return true;
+  })()`),true);
+});
+
+
+function infectionFixture() {
+  const instance = game();
+  instance.run(`startGame(GameMode.NORMAL); mobileControls=true;
+    const host=makeBacteria(player.x+320,player.y,.9,0,1);
+    bacteriaField=[host]; cellField=[]; attachCandidate=host;
+    updateProceduralBacteriaIfNeeded=()=>{}; updateWorldCells=()=>{};
+    resolveBacteriaPhysics=()=>{}; resolveBubbleCollisions=()=>{}; updateMacrophages=()=>{};
+    const contact=worldToScreen(host.x,host.y);`);
+  return instance;
+}
+
+test('infection requires uninterrupted holding on a nearby compatible silhouette', () => {
+  const {run}=infectionFixture();
+  assert.equal(run('canAttachToBacteria(player,host).valid'),true);
+  assert.equal(run('handleInfectionPointerDown({x:contact.x,y:contact.y-300},1)'),false);
+  run('host.infectable=false;');
+  assert.equal(run('handleInfectionPointerDown(contact,1)'),false);
+  run('host.infectable=true;host.x+=2000;');
+  assert.equal(run('handleInfectionPointerDown(worldToScreen(host.x,host.y),1)'),false);
+  run('host.x-=2000;handleInfectionPointerDown(contact,1);updateSearch(.2);');
+  assert.equal(run('state'), 'search');
+  run('infectionPointer.x=-1000;updateSearch(.5);');
+  assert.equal(run('infectionPointer.elapsed'),0);
+  run('Object.assign(infectionPointer,worldToScreen(host.x,host.y));updateSearch(.2);');
+  assert.equal(run('state'), 'search');
+  run('updateSearch(.5);');
+  assert.equal(run('state'), 'adsorption');
+  assert.equal(run('infectionPointer.id'),1);
+  assert.equal(run('visualTutorial.learned.infection'),true);
+});
+
+test('infection pointer cannot transfer ownership and cancellation, blur and menu release it', () => {
+  const {run,listeners}=infectionFixture();
+  run('handleInfectionPointerDown(contact,11);handleInfectionPointerDown(contact,22);');
+  assert.equal(run('infectionPointer.id'),11);
+  listeners['game:pointercancel']({pointerId:22});
+  assert.equal(run('infectionPointer.id'),11);
+  listeners['game:lostpointercapture']({pointerId:11});
+  assert.equal(run('infectionPointer'),null);
+  for(const action of [()=>listeners['window:blur'](),()=>run('resetGame()')]) {
+    run('state=State.SEARCH;handleInfectionPointerDown(contact,11);');
+    action();
+    assert.equal(run('infectionPointer'),null);
+  }
+});
+
+test('tutorial progress persists only learned actions and survives unavailable storage', () => {
+  const saved=new Map();
+  const storage={getItem:k=>saved.get(k),setItem:(k,v)=>saved.set(k,v)};
+  const first=game(null,storage);
+  first.run(`startGame(GameMode.NORMAL);learnTutorial('movement');learnTutorial('nucleotide');resetGame();`);
+  const second=game(null,storage);
+  assert.equal(second.run('visualTutorial.learned.movement'),true);
+  assert.equal(second.run('visualTutorial.learned.nucleotide'),true);
+  assert.equal(second.run('visualTutorial.learned.lysis'),undefined);
+  const denied=game(null,{getItem(){throw Error('denied')},setItem(){throw Error('denied')}});
+  denied.run("learnTutorial('movement');resetGame();");
+  assert.equal(denied.run('visualTutorial.learned.movement'),true);
+});
+
+test('tutorial drawing never moves letters or assembly pieces or generates inputs', () => {
+  const {run}=game();
+  assert.equal(run(`(()=>{
+    startGame(GameMode.NORMAL);createInitialDnaFromInjection();
+    nucleotideGame=createNucleotideGame(replication.dnaPieces[0]);setState(State.NUCLEOTIDE_MINIGAME);
+    const before=JSON.stringify(nucleotideGame);
+    for(let i=0;i<240;i++){updateVisualTutorial(1/60);drawVisualTutorial();}
+    if(before!==JSON.stringify(nucleotideGame)||pendingActionTaps||mouse.down) return false;
+    createPhagePartsFromDna(replication.dnaPieces[0]);setState(State.PART_ASSEMBLY);
+    const parts=JSON.stringify(assembly);
+    for(let i=0;i<240;i++){updateVisualTutorial(1/60);drawVisualTutorial();}
+    return parts===JSON.stringify(assembly)&&!visualTutorial.learned.nucleotide&&!visualTutorial.learned['assembly-genome'];
+  })()`),true);
+});
+
+test('one success hides each repeated-element lesson and assembly advances to the next gesture', () => {
+  const {run}=game();
+  assert.equal(run(`(()=>{
+    startGame(GameMode.NORMAL);createInitialDnaFromInjection();setState(State.DNA_REPLICATION);
+    if(getTutorialCue().key!=='dna-copy')return false;
+    activateDna(replication.dnaPieces[0]);
+    if(getTutorialCue())return false;
+    while(replication.dnaPieces.length<TARGET_DNA)activateDna(replication.dnaPieces.find(d=>!d.duplicated));
+    if(getTutorialCue().key!=='dna-process')return false;
+    activateDna(replication.dnaPieces[0]);
+    const item=nucleotideGame.nucleotides[0],slot=nucleotideGame.slots[0];
+    item.x=slot.x;item.y=slot.y;dropNucleotideOnSlot(item);
+    if(getTutorialCue())return false;
+    createPhagePartsFromDna(replication.dnaPieces[0]);setState(State.PART_ASSEMBLY);
+    if(getTutorialCue().key!=='assembly-genome')return false;
+    const genome=assembly.activeParts.find(p=>p.kind==='genome'),head=assembly.activeParts.find(p=>p.kind==='head');
+    genome.x=head.x;genome.y=head.y;trySnapParts();
+    return getTutorialCue().key==='assembly-head'&&visualTutorial.learned['assembly-genome'];
   })()`),true);
 });

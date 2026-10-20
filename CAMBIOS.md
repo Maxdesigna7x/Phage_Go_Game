@@ -14,3 +14,14 @@
 Verificación: 30 pruebas automatizadas; revisión visual en 1024×768 y 844×390, sin bandas y sin errores de consola.
 
 Publicación: GitHub Pages desde `main` en https://maxdesigna7x.github.io/Phage_Go_Game/
+
+
+# Tutorial visual — 20 de octubre de 2026
+
+- Punteros originales `pointing_pulse_on/off` convertidos a WebP con lienzo y alfa intactos.
+- Ayudas animadas para movimiento, mantener sobre bacteria, inyección, duplicar/procesar ADN, arrastrar letras, las tres uniones del fago y pulsaciones de lisis.
+- Cada ayuda se retira al completar su acción y se recuerda localmente entre partidas. Las demostraciones solo mueven el puntero.
+- Se retira el botón de infección: mantener sobre una bacteria compatible al alcance inicia el acople y permite continuar inyectando. Se conservan teclado y accesibilidad.
+- Verificación: 108 pruebas, revisión visual y recorrido en navegador desde pulsación sobre bacteria hasta ADN, sin errores de consola.
+
+Detalle y lista de cambios: [docs/tutorial-visual.md](docs/tutorial-visual.md).
