@@ -1,3 +1,6 @@
+const soundEffects = window.SFX || {play() {}, loop() {}, stopAll() {}, menuOpen:false};
+function playSound(name, options) { void soundEffects.play(name, options); }
+
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 const loading = document.getElementById("loading");
@@ -21,6 +24,9 @@ const MAX_SPEED = 430;
 const BACTERIA_CELL = 980;
 const ACTIVE_RADIUS = 2600;
 const BACTERIA_UNIT = 644;
+// All redesigned infection skins share this canvas, including transparent margins.
+const BACTERIA_CANVAS_WIDTH = 1001;
+const BACTERIA_BODY_WIDTH = 805;
 const MIN_BACTERIA_DISTANCE = BACTERIA_UNIT;
 const CAMERA_LERP = 0.038;
 const HARD_MODE_DURATION_MS = 10 * 60 * 1000;
@@ -82,7 +88,7 @@ const DesktopMovementMode = {
 };
 
 const ASSETS = {
-  introBack: "assets_webp/Intro_back.webp",
+  introBack: "assets_webp/Intro_back_V2.webp",
   title: "assets_webp/Title.webp",
   easyIcon: "assets_webp/phage_easy.webp",
   hardIcon: "assets_webp/phage_hard.webp",
@@ -90,19 +96,22 @@ const ASSETS = {
   arrow: "assets_webp/Arrow.webp",
   phage: "assets_webp/Phage.webp",
   phageSprite: "assets_webp/Phage_Sprite.webp",
-  bacteriaInside: "assets_webp/Bacteria_Inside.webp",
-  bacteriaOutside1: "assets_webp/Bacteria_Outside_1.webp",
-  bacteriaOutside2: "assets_webp/Bacteria_Outside_2.webp",
-  bacteriaOutside3: "assets_webp/Bacteria_Outside_3.webp",
-  bacteriaOutside4: "assets_webp/Bacteria_Outside_4.webp",
-  bacteriaOutside5: "assets_webp/Bacteria_Outside_5.webp",
-  bacteriaOutside6: "assets_webp/Bacteria_Outside_6.webp",
+  bacteriaInside: "assets_webp/new_size/Bacteria_Inside.webp",
+  bacteriaOutside1: "assets_webp/new_size/Bacteria_Outside_1.webp",
+  bacteriaOutside2: "assets_webp/new_size/Bacteria_Outside_2.webp",
+  bacteriaOutside3: "assets_webp/new_size/Bacteria_Outside_3.webp",
+  bacteriaOutside4: "assets_webp/new_size/Bacteria_Outside_4.webp",
+  bacteriaOutside5: "assets_webp/new_size/Bacteria_Outside_5.webp",
+  bacteriaOutside6: "assets_webp/new_size/Bacteria_Outside_6.webp",
   body: "assets_webp/Body_Phage.webp",
   head: "assets_webp/Head_Phage.webp",
+  phagePhase1: "assets_webp/Phage_phase_1.webp",
+  phagePhase2: "assets_webp/Phage_phase_2.webp",
+  phagePhase3: "assets_webp/Phage_phase_3.webp",
   legs: "assets_webp/Legs_Phage.webp",
   dnaBroken: "assets_webp/DNA_broken.webp",
   dnaComplete: "assets_webp/DNA_complete.webp",
-  dnaIcon: "assets_webp/DNA_icon.png",
+  dnaIcon: "assets_webp/DNA_icon.webp",
   nucA: "assets_webp/Nucleotido_A.webp",
   nucC: "assets_webp/Nucleotido_C.webp",
   nucG: "assets_webp/Nucleotido_G.webp",
@@ -134,6 +143,7 @@ const NUCLEOTIDE_SEQUENCES = [
   ["A", "C", "T", "G"],
 ];
 
+for (const key of WORLD_SPRITES) ASSETS[key] = `assets_webp/celulas/${key.slice(5)}.webp`;
 const img = {};
 const keys = new Set();
 const mouse = { x: 0, y: 0, down: false, justDown: false, justUp: false };
@@ -150,6 +160,7 @@ let stateTime = 0;
 let camera = { x: 0, y: 0, zoom: 1 };
 let player;
 let bacteriaField;
+let cellField = [];
 let targetBacteria = null;
 let attachPose = null;
 let attachCandidate = null;
@@ -168,7 +179,7 @@ let worldTime = 0;
 let ambientLife = [];
 const depthSprites = [];
 const backgroundFields = [];
-let bubbleStats = { total: 0, combo: 0, cooldown: 0, energy: 0 };
+let bubbleStats = { total: 0, combo: 0, cooldown: 0, energy: 0, popAge: 1 };
 const silhouetteGlows = {};
 let replication;
 let nucleotideGame = null;
@@ -199,7 +210,7 @@ const stageInfo = {
   [State.NUCLEOTIDE_MINIGAME]: ["Nucleotidos", 4, "Arrastra cada nucleotido al slot con su misma letra."],
   [State.BIOSYNTHESIS]: ["Fabricación", 4, "La bacteria fabrica las piezas del fago."],
   [State.PART_ASSEMBLY]: ["Ensamblaje", 5, "Junta cabeza, cuerpo y patas para formar un fago."],
-  [State.LYSIS]: ["Lisis", 6, "Pulsa ESPACIO rapidamente para liberar los fagos."],
+  [State.LYSIS]: ["Lisis", 6, "Toca la pantalla o pulsa ESPACIO para liberar los fagos."],
   [State.ESCAPE]: ["Nuevos fagos", 6, "¡Libre! Sigue explorando con uno de los fagos que creaste."],
 };
 
@@ -225,6 +236,8 @@ function init() {
 }
 
 function resetGame() {
+  soundEffects.stopAll();
+  if (state !== State.INTRO) playSound("volver_menu");
   playfield.classList.remove("playing");
   state = State.INTRO;
   stateTime = 0;
@@ -266,6 +279,7 @@ function resetCycleState(x = player?.x || 330, y = player?.y || 470, rotation = 
     scale: 0.24,
     animTime: 0,
     collisionTimer: 0,
+    contactSoundTimer: 0,
   };
   bacteriaField = [];
   currentProcCell = { x: null, y: null };
@@ -293,14 +307,17 @@ function startGame(mode) {
   if (isDisplayBlocked()) return;
   playfield.classList.add("playing");
   gameMode = mode;
+  playSound("partida_iniciar");
   score = 0;
   kills = 0;
   infectedBacteriaSeeds = new Set();
+  cellField = [];
   hardModeStartedAt = mode === GameMode.HARD ? performance.now() : 0;
   poppedBubbles.clear();
-  resetCycleState(330, 470, 0.65);
+  resetCycleState(50, 50, 0.65);
+  camera.x=player.x-W/2; camera.y=player.y-H/2;
   updateProceduralBacteriaIfNeeded(true);
-  bubbleStats = { total: 0, combo: 0, cooldown: 0, energy: 0 };
+  bubbleStats = { total: 0, combo: 0, cooldown: 0, energy: 0, popAge: 1 };
   menuButtons.classList.add("hidden");
   menuButton.classList.remove("hidden");
   restartButton.classList.add("hidden");
@@ -400,35 +417,32 @@ function makeGlowSprite(size, color) {
 }
 
 function updateProceduralBacteriaIfNeeded(force = false) {
-  const cx = Math.floor(player.x / BACTERIA_CELL);
-  const cy = Math.floor(player.y / BACTERIA_CELL);
+  const cx = Math.floor(player.x / BACTERIA_CELL), cy = Math.floor(player.y / BACTERIA_CELL);
   if (!force && currentProcCell.x === cx && currentProcCell.y === cy) return;
   currentProcCell = { x: cx, y: cy };
-  const generated = [];
-  for (let gx = cx - 3; gx <= cx + 3; gx += 1) {
-    for (let gy = cy - 3; gy <= cy + 3; gy += 1) {
-      const seed = hash2(gx, gy);
-      if ((seed % 100) < 22) continue;
-      const r1 = seeded(seed);
-      const r2 = seeded(seed + 11);
-      const r3 = seeded(seed + 23);
-      const r4 = seeded(seed + 41);
-      const x = gx * BACTERIA_CELL + 230 + r1 * (BACTERIA_CELL - 460);
-      const y = gy * BACTERIA_CELL + 210 + r2 * (BACTERIA_CELL - 420);
-      const dist = Math.hypot(x - player.x, y - player.y);
-      if (dist > ACTIVE_RADIUS) continue;
-      if (generated.some(b => Math.hypot(x - b.x, y - b.y) < MIN_BACTERIA_DISTANCE)) continue;
-      const variant = getBacteriaVariant(seed);
-      const health = isHealthyBacteriaVariant(variant) ? "healthy" : "broken";
-      const scale = 0.76 + r3 * 0.2;
-      generated.push(makeBacteria(x, y, scale, -0.45 + r4 * 0.9, variant, health, seed));
+  const previousCells = new Map(cellField.map(c=>[c.seed,c]));
+  const generated=[], cells=[];
+  for (let gx=cx-3;gx<=cx+3;gx++) for(let gy=cy-3;gy<=cy+3;gy++) {
+    const seed=hash2(gx,gy);
+    const x=(gx+.5)*BACTERIA_CELL+(seeded(seed)-.5)*36;
+    const y=(gy+.5)*BACTERIA_CELL+(seeded(seed+11)-.5)*36;
+    if(Math.hypot(x-player.x,y-player.y)>ACTIVE_RADIUS) continue;
+    const kind=worldSlotKind(gx,gy);
+    if(kind==='cell') {
+      const type=FOREGROUND_CELL_TYPES[(seed>>>3)%FOREGROUND_CELL_TYPES.length];
+      const cell=previousCells.get(seed) || makeWorldCell(type,x,y,seed);
+      cells.push(cell);
+    } else {
+      const variant=kind==='healthy'?1:2+(seed%5);
+      const cell=makeBacteria(x,y,.74+seeded(seed+23)*.08,-.45+seeded(seed+41)*.9,variant,kind,seed);
+      generated.push(cell);
     }
   }
-  bacteriaField = generated;
+  bacteriaField=generated;cellField=cells;
 }
 
 function getBacteriaVariant(seed) {
-  if (seed % 3 === 0) return 1;
+  if (seed % 2 === 0) return 1;
   return 2 + (seed % 5);
 }
 
@@ -440,35 +454,96 @@ function isBacteriaInteractable(bacteria) {
   return Boolean(bacteria?.infectable && bacteria.healthy && isHealthyBacteriaVariant(bacteria.variant));
 }
 
-function resolveBacteriaPhysics() {
-  const body = getPhageBodyPoint(player);
-  for (const b of bacteriaField) {
-    const local = worldToLocal(b.x, b.y, b.rotation, body.x, body.y);
-    const rx = b.rx + 42;
-    const ry = b.ry + 42;
-    const value = (local.x * local.x) / (rx * rx) + (local.y * local.y) / (ry * ry);
-    if (value >= 1) continue;
-    if (player) player.collisionTimer = 0.35;
-    if (!isBacteriaInteractable(b) && state === State.SEARCH) {
-      toastMessage = "Busca una bacteria sana para infectar";
-      toastTimer = 1.8;
+function getPlayerCollisionProbes() {
+  return [{offset:-125,r:22},{offset:35,r:18},{offset:155,r:13}].map(p=>({
+    ...localToWorld(player.x,player.y,player.rotation,0,p.offset*player.scale),r:p.r,
+  }));
+}
+
+function registerWorldContact(entity) {
+  if((player.contactSoundTimer || 0)<=0) playSound("choque_suave", {volume:0.55});
+  player.contactSoundTimer=.35;
+  // A pushable body makes contact without forcing the blocked collision pose.
+  if(!entity.movable) player.collisionTimer=.35;
+  if(entity.kind==='cell' || !isBacteriaInteractable(entity)) {
+    if((entity.infoCooldown||0)<=0) {
+      toastMessage=entity.kind==='cell'?cellEncounterText(entity):"Bacteria dañada: ya está rota. Busca una bacteria sana compatible.";
+      toastTimer=4;entity.infoCooldown=3;
     }
-    const normalLocal = normalize({ x: local.x / (rx * rx), y: local.y / (ry * ry) });
-    const normalWorld = rotatePoint(normalLocal.x, normalLocal.y, b.rotation);
-    const push = (1 - Math.sqrt(value)) * 85;
-    player.x += normalWorld.x * push;
-    player.y += normalWorld.y * push;
-    const vn = player.vx * normalWorld.x + player.vy * normalWorld.y;
-    if (vn < 0) {
-      player.vx -= vn * normalWorld.x * 1.45;
-      player.vy -= vn * normalWorld.y * 1.45;
+  }
+}
+
+function resolveBacteriaPhysics() {
+  for(const entity of [...bacteriaField,...cellField]) {
+    const key=entity.sprite || `bacteriaOutside${entity.variant}`,shape=collisionShape(key);
+    const radius=Math.hypot(shape.width,shape.height)*entity.scale/2+75;
+    if(Math.hypot(player.x-entity.x,player.y-entity.y)>radius) continue;
+    let touched=false;
+    for(let iteration=0;iteration<3;iteration++) {
+      let contact=null;
+      for(const probe of getPlayerCollisionProbes()) {
+        const surface=spriteSurface(entity,probe),penetration=probe.r-surface.distance;
+        if(penetration>0 && (!contact || penetration>contact.penetration)) contact={...surface,penetration};
+      }
+      if(!contact) break;
+      const n=contact.normal, inverseMass=entity.movable?1.8:0;
+      const correction=Math.min(contact.penetration+.5,90)/(1+inverseMass);
+      player.x+=n.x*correction;player.y+=n.y*correction;
+      if(entity.movable) {entity.x-=n.x*correction*inverseMass;entity.y-=n.y*correction*inverseMass;}
+      const relative=(player.vx-(entity.vx||0))*n.x+(player.vy-(entity.vy||0))*n.y;
+      if(relative<0) {
+        const impulse=-(1+.35)*relative/(1+inverseMass);
+        player.vx+=n.x*impulse;player.vy+=n.y*impulse;
+        if(entity.movable) {
+          entity.vx-=n.x*impulse*inverseMass;entity.vy-=n.y*impulse*inverseMass;
+          const tangent=-n.y*player.vx+n.x*player.vy;
+          entity.spin=clamp(entity.spin+tangent*.001,-1.4,1.4);
+        }
+      }
+      touched=true;
+    }
+    if(touched) registerWorldContact(entity);
+  }
+}
+
+function updateWorldCells(dt) {
+  for(const entity of [...bacteriaField,...cellField]) entity.infoCooldown=Math.max(0,(entity.infoCooldown||0)-dt);
+  for(const cell of cellField) {
+    if(!cell.movable) continue;
+    const speed=Math.hypot(cell.vx,cell.vy);
+    if(speed>240) {cell.vx*=240/speed;cell.vy*=240/speed;}
+    cell.x+=cell.vx*dt;cell.y+=cell.vy*dt;cell.rotation+=cell.spin*dt;
+    const drag=Math.exp(-2.6*dt);cell.vx*=drag;cell.vy*=drag;cell.spin*=drag;
+    // Nearby bodies constrain the drifting platelet; no simulation outside the active neighbourhood.
+    for(const obstacle of [...bacteriaField,...cellField]) {
+      if(obstacle===cell) continue;
+      const ownShape=collisionShape(cell.sprite),otherShape=collisionShape(obstacle.sprite || `bacteriaOutside${obstacle.variant}`);
+      if(Math.hypot(cell.x-obstacle.x,cell.y-obstacle.y)>ownShape.radius*cell.scale+otherShape.radius*obstacle.scale+8) continue;
+      let surface=null,penetration=0;
+      for(const [px,py] of ownShape.points) {
+        const point=localToWorld(cell.x,cell.y,cell.rotation,px*cell.scale,py*cell.scale);
+        const contact=spriteSurface(obstacle,point),depth=1-contact.distance;
+        if(depth>penetration) {surface=contact;penetration=depth;}
+      }
+      if(!surface) continue;
+      const n=surface.normal;
+      cell.x+=n.x*(penetration+.2);cell.y+=n.y*(penetration+.2);
+      const vn=cell.vx*n.x+cell.vy*n.y;
+      if(vn<0) {cell.vx-=n.x*vn*1.2;cell.vy-=n.y*vn*1.2;}
     }
   }
 }
 
 function setState(next) {
   if (next === State.INJECTION && targetBacteria) infectionView = { camera: { ...camera }, rotation: targetBacteria.rotation };
+  const previous = state;
   state = next;
+  const soundByState = { [State.ADSORPTION]: "infeccion_acercamiento", [State.NUCLEOTIDE_MINIGAME]: "adn_seleccionar",
+    [State.BIOSYNTHESIS]: "adn_secuencia_completa", [State.PART_ASSEMBLY]: "pieza_aparecer",
+    [State.LYSIS]: "fagos_objetivo_completo", [State.ESCAPE]: "fago_seguimiento", [State.COMPLETE]: "partida_tiempo_agotado" };
+  if (previous !== next && soundByState[next]) playSound(soundByState[next]);
+  if (previous === State.INJECTION && next === State.DNA_REPLICATION) { playSound("adn_inyeccion_completa"); playSound("bacteria_entrar", {volume:0.35}); }
+
   if (next !== State.SEARCH) resetJoystick();
   stateTime = 0;
   dragItem = null;
@@ -483,7 +558,8 @@ function setState(next) {
 function loop(time) {
   const dt = Math.min(0.033, (time - lastTime) / 1000 || 0);
   lastTime = time;
-  if (isDisplayBlocked() || document.hidden) {
+  if (isDisplayBlocked() || document.hidden || soundEffects.menuOpen) {
+    if (!soundEffects.menuOpen) soundEffects.stopAll();
     if (pausedAt === null) pausedAt = performance.now();
     requestAnimationFrame(loop);
     return;
@@ -502,10 +578,29 @@ function loop(time) {
   spaceTap = actionTaps > 0 || (actionDown && !spaceWasDown);
   spaceWasDown = actionDown;
   update(dt, actionDown, actionTaps);
+  updateSoundEffects(actionDown);
   render(dt);
   mouse.justDown = false;
   mouse.justUp = false;
   requestAnimationFrame(loop);
+}
+
+let lastSwimStroke = null;
+function updateSoundEffects(actionDown) {
+  const swim = getPlayerSwimAnimation();
+  if (state === State.SEARCH && player.collisionTimer <= 0 && swim.moving) {
+    if (lastSwimStroke !== swim.stroke) {
+      lastSwimStroke = swim.stroke;
+      // One soft water pulse per complete leg cycle; no independent audio loop.
+      playSound("fago_nadar", {volume:0.3, duration:0.16, fade:0.015, maxDelay:120});
+    }
+  } else {
+    if (lastSwimStroke !== null) soundEffects.stop?.("fago_nadar");
+    lastSwimStroke = null;
+  }
+  soundEffects.loop("energia_activa", state===State.SEARCH && bubbleStats.energy>0, {volume:0.15});
+  soundEffects.loop("adn_inyectar", state===State.INJECTION && actionDown, {volume:0.4});
+  soundEffects.loop("biosintesis_proceso", state===State.BIOSYNTHESIS, {volume:0.3});
 }
 
 function update(dt, spaceDown, actionTaps = spaceTap ? 1 : 0) {
@@ -515,7 +610,8 @@ function update(dt, spaceDown, actionTaps = spaceTap ? 1 : 0) {
   if ([State.DNA_REPLICATION, State.NUCLEOTIDE_MINIGAME, State.BIOSYNTHESIS, State.PART_ASSEMBLY].includes(state)) updateConstructedPhages(dt);
   if (player) {
     player.animTime += dt;
-    if (player.collisionTimer > 0) player.collisionTimer -= dt;
+    if (player.collisionTimer > 0) player.collisionTimer = Math.max(0, player.collisionTimer-dt);
+    player.contactSoundTimer = Math.max(0, (player.contactSoundTimer || 0)-dt);
   }
   if (gameMode === GameMode.HARD && state !== State.INTRO && state !== State.COMPLETE) {
     if (performance.now() - hardModeStartedAt >= HARD_MODE_DURATION_MS) {
@@ -545,6 +641,7 @@ function update(dt, spaceDown, actionTaps = spaceTap ? 1 : 0) {
 
 function updateSearch(dt) {
   updateProceduralBacteriaIfNeeded();
+  updateWorldCells(dt);
   const movement = getMovementInput();
   const boost = bubbleStats.energy > 0 ? ENERGY_SPEED_MULTIPLIER : 1;
   if (movement.mobileActive || movement.simpleActive) {
@@ -581,6 +678,7 @@ function updateSearch(dt) {
   resolveBubbleCollisions();
   resolveBacteriaPhysics();
 
+  const previousCandidate = attachCandidate;
   attachCandidate = null;
   let closestDistance = Infinity;
   for (const b of bacteriaField) {
@@ -592,6 +690,7 @@ function updateSearch(dt) {
     }
   }
 
+  if (attachCandidate && !previousCandidate) playSound("bacteria_disponible", {volume:0.3});
   if (attachCandidate && (keys.has(" ") || keys.has("Spacebar") || touchControls.actionDown)) {
     clearBubbleEnergy();
     targetBacteria = attachCandidate;
@@ -613,6 +712,7 @@ function updateSearch(dt) {
 }
 
 function updateAdsorption(dt, spaceDown) {
+  const previousTimer=attachTimer;
   attachTimer = Math.min(DOCK_SECONDS, attachTimer + dt);
   const t = smoothstep(0, DOCK_SECONDS, attachTimer);
   player.x = lerp(attachPose.start.x, attachPose.x, t);
@@ -620,6 +720,7 @@ function updateAdsorption(dt, spaceDown) {
   player.rotation = lerpAngle(attachPose.start.rotation, attachPose.rotation, t);
   camera.x = lerp(camera.x, targetBacteria.x - W * 0.5, 0.08);
   camera.y = lerp(camera.y, targetBacteria.y - H * 0.52, 0.08);
+  if (previousTimer < DOCK_SECONDS && attachTimer >= DOCK_SECONDS) playSound("infeccion_anclaje");
   if (attachTimer >= DOCK_SECONDS && (spaceDown || spaceTap)) setState(State.INJECTION);
 }
 
@@ -700,6 +801,8 @@ function spawnDnaCopy(source) {
   source.vx -= Math.cos(angle) * 260;
   source.vy -= Math.sin(angle) * 210;
   replication.dnaPieces.push(copy);
+  playSound("adn_copiar");
+  if (replication.dnaPieces.length===TARGET_DNA) playSound("adn_copias_completas");
   spawnParticle(source.x, source.y, "#ffd56a", 18);
 }
 
@@ -759,8 +862,10 @@ function dropNucleotideOnSlot(item) {
       if (item.code === slot.code) {
         slot.filled = true;
         matched = true;
+        playSound("nucleotido_encajar");
         spawnParticle(slot.x, slot.y, "#9be8ff", 16);
       } else {
+        playSound("pieza_no_encaja", {volume:0.4});
         nucleotideGame.message = `Prueba otra vez: coloca ${slot.code} sobre ${slot.code}.`;
         nucleotideGame.messageTimer = 1.2;
       }
@@ -812,7 +917,7 @@ function makeDrag(kind, code, x, y) {
 }
 
 function updatePartAssembly(dt) {
-  handleDrag(assembly.activeParts, item => trySnapParts(item));
+  handleDrag(assembly.activeParts.filter(p => !assembly.joining.headBody || p.kind !== "head"), item => trySnapParts(item));
   for (const part of assembly.activeParts) {
     keepInsideBacteria(part, 60);
   }
@@ -835,10 +940,12 @@ function trySnapParts() {
     const genome = assembly.activeParts.find(p => p.kind === "genome");
     if (genome && Math.hypot(genome.x - head.x, genome.y - head.y) < 90) {
       assembly.packed = true;
+      playSound("adn_empaquetar");
       assembly.activeParts = assembly.activeParts.filter(p => p !== genome);
       spawnParticle(head.x, head.y, "#ffdd69", 20);
       sayAssembly("¡ADN protegido! Ahora une cabeza y cola.");
     } else {
+      playSound("pieza_no_encaja", {volume:0.4});
       sayAssembly("Primero arrastra el ADN al interior de la cabeza.");
     }
     return;
@@ -846,24 +953,28 @@ function trySnapParts() {
 
   if (!assembly.joining.headBody && Math.hypot(head.x - body.x, head.y - body.y) < 75) {
     assembly.joining.headBody = true;
+    playSound("fago_unir_cabeza_cuerpo");
     const cx = (head.x + body.x) / 2;
     const cy = (head.y + body.y) / 2;
-    head.x = cx - 15;
-    head.y = cy - 49;
     body.x = cx;
     body.y = cy + 13;
+    head.x = body.x;
+    head.y = body.y - (280 - 103) * ASSEMBLY_PHASE_SCALE;
     spawnParticle(cx, cy, "#9be8ff", 14);
   }
 
   if (assembly.joining.headBody && !assembly.joining.bodyLegs && Math.hypot(body.x - legs.x, body.y - legs.y) < 85) {
     assembly.joining.bodyLegs = true;
-    completePhageFromParts(body.x, body.y);
+    playSound("fago_unir_fibras");
+    completePhageFromParts(body.x + (177 - 170) * ASSEMBLY_PHASE_SCALE, body.y + (234.5 - 280) * ASSEMBLY_PHASE_SCALE);
   } else if (!assembly.joining.headBody && Math.hypot(head.x - legs.x, head.y - legs.y) < 75) {
+    playSound("pieza_no_encaja", {volume:0.4});
     sayAssembly("Primero une la cabeza con el cuerpo.");
   }
 }
 
 function completePhageFromParts(x, y) {
+  playSound("fago_construido");
   assembly.completed += 1;
   assembly.completePhages.push({
     x,
@@ -871,6 +982,7 @@ function completePhageFromParts(x, y) {
     vx: rand(-16, 16),
     vy: rand(-10, 10),
     rotation: rand(-0.25, 0.25),
+    swimAge: 0,
   });
   assembly.activeParts = [];
   spawnParticle(x, y, "#f6e56e", 30);
@@ -880,12 +992,19 @@ function completePhageFromParts(x, y) {
 function updateLysis(dt, taps = spaceTap ? 1 : 0) {
   if (!lysisStartedAt) lysisStartedAt = performance.now();
   if (taps > 0 && !lysis.burst) {
+    const previousPressure=lysis.pressure;
     lysis.pressure = clamp(lysis.pressure + 0.105 * taps, 0, 1);
+    playSound("lisis_pulsar", {volume:0.5,rate:0.9+lysis.pressure*0.35});
+    if (previousPressure<1 && lysis.pressure===1) playSound("lisis_presion_maxima");
     spawnParticle(W * 0.5 + rand(-280, 280), H * 0.5 + rand(-80, 80), "#e9fb79", 8);
   }
+  const previousDamage=Math.floor(lysis.damageProgress*5);
   lysis.damageProgress = Math.min(lysis.pressure, lysis.damageProgress + dt * 0.85);
+  if (Math.floor(lysis.damageProgress*5)>previousDamage) playSound("lisis_deterioro", {volume:0.4});
   if (lysis.damageProgress >= 1 && !lysis.burst) {
     lysis.burst = true;
+    playSound("bacteria_explotar");
+    playSound("fagos_liberar", {volume:0.35});
     lysis.burstStartedAt = performance.now();
     for (let i = 0; i < 18; i++) {
       const angle = i === 0 ? -0.6 : i * Math.PI * 2 / 17;
@@ -935,6 +1054,7 @@ function updateEscape(dt) {
 }
 
 function returnToFlightAfterKill() {
+  playSound("ciclo_completo", {volume:0.45});
   const bonus = performance.now() - lysisStartedAt < 8000 ? 25 : 0;
   score += 100 + bonus;
   kills++;
@@ -965,17 +1085,22 @@ function handleDrag(items, onDrop) {
     for (let i = items.length - 1; i >= 0; i -= 1) {
       const item = items[i];
       const radius = item.kind === "nucleotide" ? 68 : item.kind === "legs" ? 70 : 64;
-      if (hit(mouse, item.x, item.y, radius)) {
+      const joined = state === State.PART_ASSEMBLY && assembly.joining.headBody && item.kind === "body";
+      const pickY = joined ? item.y + (160.5 - 280) * ASSEMBLY_PHASE_SCALE : item.y;
+      if (hit(mouse, item.x, pickY, radius)) {
         dragItem = item;
         item.dragging = true;
+        item.grabOffsetX = joined ? item.x - mouse.x : 0;
+        item.grabOffsetY = joined ? item.y - mouse.y : 0;
+        playSound(item.kind === "nucleotide" ? "nucleotido_tomar" : "pieza_tomar");
         break;
       }
     }
   }
   if (dragItem && mouse.down) {
     const oldX = dragItem.x, oldY = dragItem.y;
-    dragItem.x = mouse.x;
-    dragItem.y = mouse.y;
+    dragItem.x = mouse.x + (dragItem.grabOffsetX || 0);
+    dragItem.y = mouse.y + (dragItem.grabOffsetY || 0);
     if (state === State.PART_ASSEMBLY && assembly.activeParts.includes(dragItem)) {
       const center = { x: W * 0.5, y: H * 0.52 };
       const dx = dragItem.x - center.x;
@@ -1031,7 +1156,7 @@ function buildDepthSprites() {
   depthSprites.length = 0;
   backgroundFields.length = 0;
   const cache = {};
-  const keys = [...Array.from({ length: 8 }, (_, i) => `bg${i + 1}`), ...Array.from({ length: 6 }, (_, i) => `bacteriaOutside${i + 1}`)];
+  const keys = [...Array.from({ length: 8 }, (_, i) => `bg${i + 1}`), ...Array.from({ length: 6 }, (_, i) => `bacteriaOutside${i + 1}`), ...WORLD_SPRITES];
   // Keep the original RGB values. Uniform blue paint cannot reproduce alpha
   // compositing over a changing background, so use the original appearance.
   for (const key of keys) cache[key] = { image: img[key], ratio: 1 };
@@ -1055,7 +1180,7 @@ function drawDepthImage(key, x, y, scale, rotation, layer, alpha) {
 
 function drawBacteriaSkin(key, x, y, scale, rotation) {
   const source = img[key];
-  drawImageCenter(source, x, y, scale * 805 / source.width, rotation);
+  drawImageCenter(source, x, y, scale * BACTERIA_CANVAS_WIDTH / source.width, rotation);
 }
 
 function drawCellInterior() {
@@ -1069,15 +1194,19 @@ function makeBackgroundCell(layerIndex, gx, gy) {
   const diameter = layer.diameter * lerp(0.93, 1.07, seeded(seed + 17));
   // Each rotated sprite fits in its own cell with a gap to every neighbour.
   // Both scenery and infections use these SAME slots, avoiding duplicate cells.
-  const margin = layer.diameter * 1.07 / 2 + 24;
-  const destroyed = seeded(seed + 53) < 0.75;
-  const variant = destroyed ? Math.floor(seeded(seed + 59) * 4) + 5 : Math.floor(seeded(seed + 59) * 4) + 1;
+  const margin = layer.diameter * 1.07 + 24;
+  const kind=worldSlotKind(gx,gy,1000+layerIndex*97);
+  let key;
+  if(kind==='cell') key=cellSprite(FOREGROUND_CELL_TYPES[(seed>>>3)%FOREGROUND_CELL_TYPES.length],seed);
+  else if(kind==='healthy') {
+    key=seeded(seed+59)<.55 ? `bg${1+seed%2}` : cellSprite(seed%2?'bacilo':'espirilo',seed);
+  } else key=`bg${3+seed%6}`;
   return {
     id: `${layerIndex}:${gx}:${gy}`, layer: layerIndex, seed,
     x: gx * layer.cell + margin + seeded(seed + 3) * (layer.cell - 2 * margin),
     y: gy * layer.cell + margin + seeded(seed + 9) * (layer.cell - 2 * margin),
     diameter, rotation: -Math.PI + seeded(seed + 41) * Math.PI * 2,
-    alpha: lerp(layer.minAlpha, layer.maxAlpha, seeded(seed + 29)), key: `bg${variant}`,
+    alpha: lerp(layer.minAlpha, layer.maxAlpha, seeded(seed + 29)), key, kind,
   };
 }
 
@@ -1107,7 +1236,7 @@ function makeAmbientScene(index, initial = false, recycling = false) {
   const layer = index % PARALLAX_LAYERS.length, config = PARALLAX_LAYERS[layer];
   const used = new Set(ambientLife.filter((s, i) => s && i !== index).map(s => s.cellId));
   const cells = getBackgroundCells(layer);
-  let candidates = cells.filter(c => !used.has(c.id));
+  let candidates = cells.filter(c => c.kind!=="cell" && !c.key.startsWith("cell_") && !used.has(c.id));
   if (recycling) {
     const offscreen = candidates.filter(c => {
       const x = c.x - camera.x * config.factor, y = c.y - camera.y * config.factor, radius = c.diameter / 2;
@@ -1121,10 +1250,11 @@ function makeAmbientScene(index, initial = false, recycling = false) {
   const centerX = camera.x * config.factor + W / 2, centerY = camera.y * config.factor + H / 2;
   options.sort((a, b) => Math.hypot(a.x - centerX, a.y - centerY) - Math.hypot(b.x - centerX, b.y - centerY));
   const cell = options[Math.min(index % 2, options.length - 1)];
+  if(!cell) return null;
   const scene = {
     ...cell, cellId: cell.id, index, time: initial ? (index * 4.7) % 22 : 0,
     duration: 26 + seeded(cell.seed + 71) * 8, phase: "swim", released: [],
-    phageScale: cell.diameter / 805 * 0.42,
+    phageScale: cell.diameter / BACTERIA_BODY_WIDTH * 0.42,
   };
   const body = { x: cell.x, y: cell.y, rotation: cell.rotation, rx: cell.diameter * 0.47, ry: cell.diameter * 0.21 };
   const probe = localToWorld(cell.x, cell.y, cell.rotation, 0, cell.diameter);
@@ -1157,27 +1287,44 @@ function getAmbientPhagePose(scene, time = scene.time) {
 function updateAmbientLife(dt) {
   for (let i = 0; i < ambientLife.length; i++) {
     let scene = ambientLife[i];
+    if(!scene) {ambientLife[i]=makeAmbientScene(i,true);continue;}
     // Rebind only after leaving the cached neighbourhood. The shared slot is
     // never drawn twice, and the pool remains six actors at any camera position.
     if (!getBackgroundCells(scene.layer).some(c => c.id === scene.cellId)) {
       scene = ambientLife[i] = makeAmbientScene(i, true, true);
+      if(!scene) continue;
     }
+    const previousPhase=scene.phase;
     scene.time += dt;
     if (scene.time >= scene.duration) scene.time %= scene.duration;
     scene.phase = ambientPhase(scene.time);
+    const factor=PARALLAX_LAYERS[scene.layer].factor;
+    const sx=scene.x-camera.x*factor, sy=scene.y-camera.y*factor;
+    if(state===State.SEARCH && sx>0 && sx<W && sy>0 && sy<H && scene.phase!==previousPhase) {
+      if(scene.phase==="infected") playSound("fondo_infeccion", {volume:0.08});
+      if(scene.phase==="burst") playSound("fondo_explosion", {volume:0.1});
+    }
   }
 }
 
 function drawBackgroundSlot(key, cell) {
   const layer = PARALLAX_LAYERS[cell.layer], source = img[key];
-  const scale = cell.diameter / Math.max(source.width, source.height);
+  let scale;
+  if(key.startsWith('cell_')) {
+    const shape=collisionShape(key),bounds=shape.bounds;
+    const type=WORLD_CELL_TYPES[key.slice(5,-3)];
+    const relative=type.movable ? 0.35 : type.diameter/540;
+    scale=cell.diameter*relative/Math.max(bounds[2]-bounds[0],bounds[3]-bounds[1]);
+  } else scale=key.startsWith('bacteriaOutside')
+    ? cell.diameter / BACTERIA_BODY_WIDTH * BACTERIA_CANVAS_WIDTH / source.width
+    : cell.diameter / Math.max(source.width, source.height);
   drawDepthImage(key, cell.x - camera.x * layer.factor, cell.y - camera.y * layer.factor, scale, cell.rotation, cell.layer, cell.alpha);
 }
 
 function drawAmbientLife(layerIndex) {
   const factor = PARALLAX_LAYERS[layerIndex].factor;
   for (const scene of ambientLife) {
-    if (scene.layer !== layerIndex) continue;
+    if (!scene || scene.layer !== layerIndex) continue;
     const damage = scene.time < 7 ? 1 : scene.time < 19 ? Math.min(5, 1 + Math.floor((scene.time - 7) / 2.8)) : 6;
     drawBackgroundSlot(`bacteriaOutside${damage}`, scene);
     if (scene.time < 19) {
@@ -1207,7 +1354,7 @@ function drawBackground(dt) {
 
 function drawParallaxLayer(layer, layerIndex) {
   for (const cell of getBackgroundCells(layerIndex)) {
-    if (ambientLife.some(scene => scene.cellId === cell.id)) continue;
+    if (ambientLife.some(scene => scene && scene.cellId === cell.id)) continue;
     drawBackgroundSlot(cell.key, cell);
   }
 }
@@ -1259,24 +1406,26 @@ function resolveBubbleCollisions() {
         poppedBubbles.set(id, performance.now() + 12000);
         registerBubblePop();
         player.collisionTimer = 0.16;
-        spawnBubblePop(x - camera.x, y - camera.y, size);
+        spawnBubblePop(x, y, size);
       }
     }
   }
 }
 
 function spawnBubblePop(x, y, size) {
-  spawnParticle(x, y, "#b7f4ff", Math.round(clamp(size / 4, 8, 22)));
-  for (let i = 0; i < 5; i += 1) {
+  const count = Math.min(Math.round(clamp(size / 4, 8, 22)), QUALITY.particlesMax);
+  if (particles.length + count > QUALITY.particlesMax) particles.splice(0, particles.length + count - QUALITY.particlesMax);
+  for (let i = 0; i < count; i += 1) {
+    const angle = rand(0, Math.PI * 2), speed = rand(25, 100);
+    const life = rand(0.45, 0.9);
     particles.push({
-      x: x + rand(-size * 0.25, size * 0.25),
-      y: y + rand(-size * 0.25, size * 0.25),
-      vx: rand(-50, 50),
-      vy: rand(-70, 35),
-      life: rand(0.18, 0.4),
-      max: 0.4,
-      color: "rgba(220, 252, 255, 0.9)",
-      r: rand(2, Math.max(3, size * 0.08)),
+      kind: "bubble", space: "world",
+      x: x + Math.cos(angle) * size * 0.12,
+      y: y + Math.sin(angle) * size * 0.12,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 25,
+      life, max: life,
+      r: rand(4, Math.max(6, size * 0.16)),
     });
   }
 }
@@ -1304,14 +1453,28 @@ function screenToWorld(x, y) {
   return { x: camera.x + x / zoom, y: camera.y + y / zoom };
 }
 
+function isNearWorldElement(entity) {
+  const shape=collisionShape(entity.sprite || `bacteriaOutside${entity.variant}`);
+  if(Math.hypot(entity.x-player.x,entity.y-player.y)>Math.hypot(shape.width,shape.height)*entity.scale/2+180) return false;
+  return spriteSurface(entity,getPhageBodyPoint(player)).distance<155;
+}
+
 function drawWorldBacteria(exclude = null) {
   ctx.save();
   ctx.scale(camera.zoom || 1, camera.zoom || 1);
   ctx.translate(-camera.x, -camera.y);
   for (const b of bacteriaField) {
     if (b === exclude || !isVisibleWorld(b.x, b.y, 720)) continue;
-    if (b === attachCandidate && state === State.SEARCH) drawSilhouetteGlow("bacteriaOutside1", b.x, b.y, b.scale, b.rotation);
+    if (state === State.SEARCH) {
+      if (b === attachCandidate) drawSilhouetteGlow("bacteriaOutside1", b.x, b.y, b.scale, b.rotation);
+      else if(!isBacteriaInteractable(b) && isNearWorldElement(b)) drawSilhouetteGlow(`bacteriaOutside${b.variant}`, b.x, b.y, b.scale, b.rotation);
+    }
     drawBacteriaSkin(`bacteriaOutside${b.variant}`, b.x, b.y, b.scale, b.rotation);
+  }
+  for(const cell of cellField) {
+    if(!isVisibleWorld(cell.x,cell.y,720)) continue;
+    if(state===State.SEARCH && isNearWorldElement(cell)) drawSilhouetteGlow(cell.sprite,cell.x,cell.y,cell.scale,cell.rotation);
+    drawImageCenter(img[cell.sprite],cell.x,cell.y,cell.scale,cell.rotation);
   }
   ctx.restore();
 }
@@ -1409,7 +1572,7 @@ function drawDnaReplication() {
   } else if (processed < TARGET_DNA) {
     drawTextCentered("Click en un ADN brillante para construir un fago", safeCenterX(), safeBottom(0, 38), 30, "#fff", "900");
   }
-  if (replication.messageTimer > 0) drawToast(replication.message);
+  if (replication.messageTimer > 0) drawMinigameHint(replication.message);
 }
 
 function drawNucleotideMinigame() {
@@ -1423,7 +1586,7 @@ function drawNucleotideMinigame() {
   ctx.fillStyle = "rgba(3, 17, 27, 0.58)";
   ctx.fillRect(0, 0, W, H);
   drawPanel(layout.panelX, layout.panelY, layout.panelW, layout.panelH, 0.72);
-  drawTextCentered("Completa la secuencia del ADN", safeCenterX(), layout.titleY, layout.titleSize, "#fff", "900");
+  drawTextCentered(nucleotideGame.messageTimer > 0 ? nucleotideGame.message : "Completa la secuencia del ADN", safeCenterX(), layout.titleY, layout.titleSize, "#fff", "900");
   drawImageCenter(img.dnaComplete, safeCenterX(), layout.dnaY, layout.dnaScale, -0.06);
   for (const slot of nucleotideGame.slots) {
     drawPanel(slot.x - layout.slotW / 2, slot.y - layout.slotH / 2, layout.slotW, layout.slotH, slot.filled ? 0.5 : 0.32);
@@ -1434,9 +1597,8 @@ function drawNucleotideMinigame() {
     }
   }
   drawPanel(layout.trayX, layout.trayY, layout.trayW, layout.trayH, 0.5);
-  drawTextCentered("Nucleotidos", safeCenterX(), layout.trayTitleY, layout.trayTitleSize, "#fff", "900");
+  drawTextCentered("Nucleótidos", safeCenterX(), layout.trayTitleY, layout.trayTitleSize, "#fff", "900");
   for (const n of nucleotideGame.nucleotides) drawImageCenter(getNucleotideImage(n.code), n.x, n.y, layout.nucleotideScale, n.dragging ? 0.12 : 0);
-  if (nucleotideGame.messageTimer > 0) drawToast(nucleotideGame.message, layout.trayY - 96);
 }
 
 function getNucleotideLayout() {
@@ -1461,7 +1623,6 @@ function getNucleotideLayout() {
   const slotW = compact ? 72 : 104;
   const slotH = compact ? 78 : 116;
   const nucGap = compact ? 92 : 155;
-  const nucY = trayY + trayH * (compact ? 0.66 : 0.63);
   return {
     compact,
     panelX,
@@ -1483,10 +1644,10 @@ function getNucleotideLayout() {
     trayY,
     trayW,
     trayH,
-    trayTitleY: trayY + (compact ? 27 : 34),
+    trayTitleY: trayY - 12,
     trayTitleSize: compact ? 19 : 24,
     nucGap,
-    nucY: trayY + trayH * (compact ? 0.7 : 0.69),
+    nucY: trayY + trayH * 0.53,
     nucleotideScale: compact ? 0.36 : 0.52,
   };
 }
@@ -1519,19 +1680,18 @@ function drawPartAssembly() {
   ctx.restore();
   drawConstructedPhages();
   for (const part of assembly.activeParts) drawPart(part);
-  const instruction = !assembly.packed ? "1. Guarda el ADN dentro de la cabeza"
-    : !assembly.joining.headBody ? "2. Une la cabeza con la cola" : "3. Añade las fibras para terminar";
-  drawTextCentered(instruction, safeCenterX(), safeY(190), 34, "#fff", "900");
+  const instruction = assembly.activeParts.length === 0 ? "¡Fago completo!" : !assembly.packed ? "1. Guarda el ADN dentro de la cabeza"
+    : !assembly.joining.headBody ? "2. Une la cabeza con la cola" : "3. Arrastra el fago hacia las fibras";
+  drawMinigameHint(assembly.messageTimer > 0 ? assembly.message : instruction);
   drawTextCentered("Las proteínas forman las piezas; el ADN lleva las instrucciones.", safeCenterX(), safeBottom(0, 48), 25, "#d7f5ff");
   drawCycleStatsSide(replication.dnaPieces.filter(d => d.processed).length);
-  if (assembly.messageTimer > 0) drawToast(assembly.message, safeBottom(72, 108));
 }
 
 function drawCycleStatsSide(processedDna) {
   const panelW = 178;
   const panelH = 146;
-  const x = safeRight(panelW, SAFE_MARGIN + 18);
-  const y = safeY(gameMode === GameMode.HARD ? 244 : 164);
+  const x = safeX(SAFE_MARGIN);
+  const y = safeY(SAFE_MARGIN);
   drawPanel(x, y, panelW, panelH, 0.5);
   drawImageCenter(img.dnaIcon, x + 44, y + 48, 0.4, 0);
   drawText(`${replication.dnaPieces.length}/${TARGET_DNA}`, x + 82, y + 57, 26, "#fff", "900");
@@ -1542,14 +1702,32 @@ function drawCycleStatsSide(processedDna) {
   }
 }
 
+const ASSEMBLY_PHASE_SCALE = 0.3;
+
+function getPartAppearance(part) {
+  let key = part.kind === "genome" ? "dnaComplete" : part.kind;
+  let scale = part.kind === "genome" ? 0.3 : part.kind === "legs" ? 0.168 : part.kind === "body" ? 0.216 : 0.24;
+  let x = part.x, y = part.y;
+  if (part.kind === "head" && assembly.packed) {
+    if (assembly.joining.headBody) return null;
+    key = "phagePhase1"; scale = ASSEMBLY_PHASE_SCALE;
+    x += (177 - 170) * scale; y += (234.5 - 103) * scale;
+  } else if (part.kind === "body" && assembly.joining.headBody) {
+    key = "phagePhase2"; scale = ASSEMBLY_PHASE_SCALE;
+    x += (177 - 170) * scale; y += (234.5 - 280) * scale;
+  }
+  return { key, x, y, scale };
+}
+
 function drawPart(part) {
-  const image = part.kind === "genome" ? img.dnaComplete : part.kind === "head" ? img.head : part.kind === "body" ? img.body : img.legs;
-  const scale = part.kind === "genome" ? 0.3 : part.kind === "legs" ? 0.168 : part.kind === "body" ? 0.216 : 0.24;
+  const appearance = getPartAppearance(part);
+  if (!appearance) return;
+  const { key, x, y, scale } = appearance;
   const hint = getAssemblyHint();
   const highlight = dragItem?.kind === hint.source ? part.kind === hint.target : !dragItem && part.kind === hint.source;
-  if (highlight) drawSilhouetteGlow(part.kind === "genome" ? "dnaComplete" : part.kind, part.x, part.y, scale, part.dragging ? 0.12 : 0);
-  drawImageCenter(image, part.x, part.y, scale, part.dragging ? 0.12 : 0);
-  if (part.kind === "head" && assembly.packed) drawImageCenter(img.dnaComplete, part.x, part.y, 0.12, 0);
+  const rotation = part.dragging && !key.startsWith("phagePhase") ? 0.12 : 0;
+  if (highlight) drawSilhouetteGlow(key, x, y, scale, rotation);
+  drawImageCenter(img[key], x, y, scale, rotation);
   if (!assembly.joining.headBody) {
     const label = { head: "Cabeza", body: "Cola", legs: "Fibras", genome: "ADN" }[part.kind];
     drawTextCentered(label, part.x, part.y + 76, 22, "#fff");
@@ -1559,8 +1737,8 @@ function drawPart(part) {
 function drawBiosynthesis() {
   drawCellInterior();
   drawConstructedPhages();
-  drawTextCentered("La bacteria se convierte en una fábrica", W / 2, 210, 36, "#fff", "900");
-  drawTextCentered("El ADN aporta instrucciones. La maquinaria celular fabrica proteínas.", W / 2, 260, 25, "#d7f5ff");
+  drawTextCentered("La bacteria se convierte en una fábrica", W / 2, 175, 36, "#fff", "900");
+  drawTextCentered("El ADN aporta instrucciones. La maquinaria celular fabrica proteínas.", W / 2, safeBottom(0, 48), 25, "#d7f5ff");
   ctx.save(); ctx.translate((W - 1600) / 2, 0);
   drawImageCenter(img.dnaComplete, 450, 465, 0.45, -0.1);
   drawTextCentered("Instrucciones", 450, 580, 25, "#ffdf7d");
@@ -1577,7 +1755,7 @@ function drawBiosynthesis() {
     drawImageCenter(image, 990 + i * 100, 465 - Math.sin(t * Math.PI) * 50, 0.2 * t, 0); ctx.restore();
   });
   drawTextCentered("Piezas de proteína", 1090, 580, 25, "#9be8ff");
-  drawProgress(550, 690, 500, 24, stateTime / 3, "#62d6bf");
+  drawProgress(550, safeBottom(24, 90), 500, 24, stateTime / 3, "#62d6bf");
   ctx.restore();
 }
 
@@ -1595,22 +1773,19 @@ function drawLysis() {
     LYSIS_PHAGE_LAYOUT.forEach((layout, i) => {
       const from = assembly.completePhages[i] || { x: W * 0.5 + layout.x, y: H * 0.52 + layout.y, rotation: layout.rotation };
       const t = smoothstep(0, 0.65, stateTime);
-      drawPhageFrame(lerp(from.x, W * 0.5 + layout.x, t), lerp(from.y, H * 0.52 + layout.y, t), lerp(0.19, 0.18, t), lerpAngle(from.rotation, layout.rotation, t), 0);
+      const x = lerp(from.x, W * 0.5 + layout.x, t), y = lerp(from.y, H * 0.52 + layout.y, t);
+      const rotation = lerpAngle(from.rotation, layout.rotation, t);
+      ctx.save(); ctx.globalAlpha = 1 - t;
+      drawImageCenter(img.phagePhase3, x, y, ASSEMBLY_PHASE_SCALE, rotation);
+      ctx.globalAlpha = t; drawPhageFrame(x, y, 0.18, rotation, 0); ctx.restore();
     });
   } else {
     drawBacteriaSkin("bacteriaOutside6", W * 0.5, H * 0.52, INTERIOR_SCALE, 0);
     for (const p of lysis.released) drawPhageFrame(p.x, p.y, 0.18, p.rotation, Math.floor(worldTime * 12) % 3);
   }
   if (lysis.burst) return;
-  const panelW = 330;
-  const panelX = safeRight(panelW, SAFE_MARGIN + 24);
-  const panelY = safeY(180);
-  drawPanel(panelX, panelY, panelW, 250, 0.55);
-  drawText("PRESION ALTA", panelX + 52, panelY + 60, 25, "#ff9d57", "900");
-  drawText("Pulsa", panelX + 105, panelY + 127, 44, "#fff", "900");
-  drawText(mobileControls ? "BOTON" : "ESPACIO", panelX + (mobileControls ? 82 : 68), panelY + 187, 48, "#fff", "900");
-  drawText("para liberar los fagos", panelX + 54, panelY + 237, 24, "#fff", "800");
-  drawProgress(safeCenterX() - 295, safeY(120), 590, 34, lysis.pressure, "#f07b58");
+  drawMinigameHint(mobileControls ? "¡Toca la pantalla para liberar los fagos!" : "¡Haz clic o pulsa ESPACIO para liberar los fagos!");
+  drawProgress(safeCenterX() - 295, safeY(152), 590, 28, lysis.pressure, "#f07b58");
 }
 
 function drawComplete() {
@@ -1647,22 +1822,27 @@ function drawHud() {
   const objectiveText = mobileControls ? instruction.replaceAll("ESPACIO", "el boton") : instruction;
   const objectiveX = safeX(SAFE_MARGIN);
   const objectiveY = safeY(SAFE_MARGIN);
+  if (![State.DNA_REPLICATION, State.NUCLEOTIDE_MINIGAME, State.BIOSYNTHESIS, State.PART_ASSEMBLY].includes(state)) {
   drawPanel(objectiveX, objectiveY, 340, 132, 0.48);
   drawTextCentered("Objetivo", objectiveX + 170, objectiveY + 38, 22, "#fff", "900");
   wrapTextCentered(objectiveText, objectiveX + 170, objectiveY + 75, 260, 22, "#fff");
+  }
   drawStageIcons(stage, name);
   if (gameMode === GameMode.HARD) drawHardModeHud();
-  if (state === State.SEARCH) drawBubbleCounter();
+  if (state === State.SEARCH) drawBubbleMultiplier();
   if (state === State.SEARCH && !attachCandidate) {
     const nearest = bacteriaField.filter(isBacteriaInteractable).reduce((best, b) => !best || Math.hypot(b.x - player.x, b.y - player.y) < Math.hypot(best.x - player.x, best.y - player.y) ? b : best, null);
     if (nearest) {
       const y = safeBottom(0, 48);
-      drawPanel(safeCenterX() - 175, y - 44, 350, 70, 0.5);
-      drawTextCentered("Bacteria compatible", safeCenterX() - 24, y, 25, "#bff3b0");
-      drawImageCenter(img.arrow, safeCenterX() + 139, y - 10, 0.26, Math.atan2(nearest.y - player.y, nearest.x - player.x));
+      drawPanel(safeCenterX() - 85, y - 50, 170, 70, 0.5);
+      drawBacteriaSkin("bacteriaOutside1", safeCenterX()-27, y-15, 0.085, 0);
+      drawImageCenter(img.arrow, safeCenterX()+48, y-15, 0.3, Math.atan2(nearest.y-player.y,nearest.x-player.x));
     }
   }
-  if (toastTimer > 0) drawTopToast(toastMessage);
+  if (toastTimer > 0) {
+    if ([State.DNA_REPLICATION, State.PART_ASSEMBLY, State.BIOSYNTHESIS].includes(state)) drawMinigameHint(toastMessage);
+    else if (state !== State.NUCLEOTIDE_MINIGAME) drawTopToast(toastMessage);
+  }
 
   if (state === State.SEARCH && attachCandidate) {
     drawActionPrompt(mobileControls ? "Pulsa Infectar para acercarte" : "Pulsa ESPACIO para acercarte");
@@ -1687,19 +1867,17 @@ function drawHardModeHud() {
 }
 
 function drawStageIcons(activeStage, stageName) {
-  const icons = [img.stage0, img.stage1, img.stage2, img.stage3, img.stage4, img.stage5];
-  const baseX = safeCenterX() - 135;
-  const y = safeY(54);
-  for (let i = 0; i < icons.length; i += 1) {
-    const x = baseX + i * 54;
-    const completed = i + 1 <= activeStage;
-    ctx.save();
-    ctx.globalAlpha = completed ? 1 : 0.42;
-    if (i + 1 === activeStage) drawGlow(x, y, "green", 0.26);
-    drawImageCenter(icons[i], x, y, i + 1 === activeStage ? 0.16 : 0.135, 0);
-    ctx.restore();
+  const icons=[img.stage0,img.stage1,img.stage2,img.stage3,img.stage4,img.stage5];
+  const sizes=icons.map((icon,i)=>({scale:i+1===activeStage ? 0.25 : 0.105,width:icon.width*(i+1===activeStage ? 0.25 : 0.105)}));
+  const total=sizes.reduce((n,item)=>n+item.width,0)+5*12;
+  let cursor=safeCenterX()-total/2;
+  for(let i=0;i<icons.length;i++) {
+    const size=sizes[i],x=cursor+size.width/2,y=safeY(56);
+    ctx.save();ctx.globalAlpha=i+1<=activeStage?1:.42;
+    if(i+1===activeStage) drawGlow(x,y,'green',.34);
+    drawImageCenter(icons[i],x,y,size.scale,0);ctx.restore();cursor+=size.width+12;
   }
-  drawTextCentered(stageName, safeCenterX(), safeY(112), 24, "#fff", "900");
+  drawTextCentered(stageName,safeCenterX(),safeY(141),34,'#fff','900');
 }
 
 function drawPanel(x, y, w, h, alpha) {
@@ -1772,7 +1950,7 @@ function drawMobileControls() {
 function drawMobileActionButton(label) {
   const w = 250;
   const h = 112;
-  const x = safeX(SAFE_MARGIN);
+  const x = safeRight(w, SAFE_MARGIN);
   const y = safeBottom(h, SAFE_MARGIN);
   drawPanel(x, y, w, h, touchControls.actionDown ? 0.78 : 0.58);
   drawTextCentered(label, x + w / 2, y + 67, 30, "#ffdd69", "900");
@@ -1784,8 +1962,16 @@ function drawMobileActionButton(label) {
 function getMobileActionLabel() {
   if (state === State.SEARCH && attachCandidate) return "Infectar";
   if (state === State.ADSORPTION || state === State.INJECTION) return "Inyectar";
-  if (state === State.LYSIS) return "Liberar";
   return "";
+}
+
+function drawMinigameHint(text) {
+  // The cell ends around y=742; these two footer lines stay outside it.
+  drawTextCentered(text, safeCenterX(), safeBottom(0, 100), 30, "#fff8d9", "900");
+}
+
+function gameFont(size, weight = "700") {
+  return Number(weight) >= 900 ? `400 ${size}px "Lilita One", sans-serif` : `${weight} ${size}px Nunito, sans-serif`;
 }
 
 function drawToast(text, y = safeY(170)) {
@@ -1794,21 +1980,20 @@ function drawToast(text, y = safeY(170)) {
   wrapTextCentered(text, x + 300, y + 30, 550, 24, "#fff");
 }
 
+function getPlayerSwimAnimation() {
+  const movement = getMovementInput();
+  const thrust = movement.mobileActive || movement.simpleActive || movement.up || movement.down || movement.left || movement.right;
+  const moving = Boolean(thrust || Math.hypot(player.vx, player.vy) > 30);
+  const tick = Math.floor(player.animTime * 12);
+  return { moving, frame: tick % 3, stroke: Math.floor(tick / 3) };
+}
+
 function getPlayerFrameIndex() {
   if (state === State.ADSORPTION || state === State.INJECTION) return 0;
-  if (player.collisionTimer > 0) {
-    return 3;
-  }
-  const movement = getMovementInput();
-  const isThrusting = movement.mobileActive || movement.simpleActive || movement.up || movement.down || movement.left || movement.right;
-  const isMoving = isThrusting || Math.hypot(player.vx, player.vy) > 30;
-
-  if (isMoving) {
-    return Math.floor(player.animTime * 12) % 3;
-  } else {
-    const idleFrames = [0, 2];
-    return idleFrames[Math.floor(player.animTime * 4) % 2];
-  }
+  if (player.collisionTimer > 0) return 3;
+  const swim = getPlayerSwimAnimation();
+  if (swim.moving) return swim.frame;
+  return [0, 2][Math.floor(player.animTime * 4) % 2];
 }
 
 function drawPhageFrame(x, y, scale, rotation, frameIndex) {
@@ -1855,7 +2040,7 @@ function drawImageCover(image, x, y, w, h) {
 function drawTitleText(text, x, y, size) {
   ctx.save();
   ctx.textAlign = "center";
-  ctx.font = `900 ${size}px Inter, system-ui, sans-serif`;
+  ctx.font = gameFont(size, "900");
   ctx.lineWidth = 15;
   ctx.strokeStyle = "#082540";
   ctx.fillStyle = "#fff7e8";
@@ -1870,7 +2055,7 @@ function drawTitleText(text, x, y, size) {
 function drawTextCentered(text, x, y, size, color, weight = "700") {
   ctx.save();
   ctx.textAlign = "center";
-  ctx.font = `${weight} ${size}px Inter, system-ui, sans-serif`;
+  ctx.font = gameFont(size, weight);
   ctx.fillStyle = color;
   ctx.lineWidth = Math.max(3, size * 0.12);
   ctx.strokeStyle = "rgba(4, 20, 34, 0.65)";
@@ -1904,7 +2089,7 @@ function drawTintedImageCenterOn(target, image, x, y, scale, rotation, tint) {
 
 function drawText(text, x, y, size, color, weight = "700") {
   ctx.save();
-  ctx.font = `${weight} ${size}px Inter, system-ui, sans-serif`;
+  ctx.font = gameFont(size, weight);
   ctx.fillStyle = color;
   ctx.lineWidth = Math.max(3, size * 0.12);
   ctx.strokeStyle = "rgba(4, 20, 34, 0.65)";
@@ -1917,7 +2102,7 @@ function wrapText(text, x, y, maxWidth, lineHeight, color) {
   const words = text.split(" ");
   let line = "";
   ctx.save();
-  ctx.font = "800 23px Inter, system-ui, sans-serif";
+  ctx.font = '800 23px Nunito, sans-serif';
   ctx.fillStyle = color;
   ctx.strokeStyle = "rgba(4, 20, 34, 0.65)";
   ctx.lineWidth = 3;
@@ -1942,7 +2127,7 @@ function wrapTextCentered(text, x, y, maxWidth, lineHeight, color) {
   let line = "";
   ctx.save();
   ctx.textAlign = "center";
-  ctx.font = "800 21px Inter, system-ui, sans-serif";
+  ctx.font = '800 21px Nunito, sans-serif';
   ctx.fillStyle = color;
   ctx.strokeStyle = "rgba(4, 20, 34, 0.65)";
   ctx.lineWidth = 3;
@@ -1963,10 +2148,9 @@ function wrapTextCentered(text, x, y, maxWidth, lineHeight, color) {
 }
 
 function drawTopToast(text) {
-  const x = safeCenterX() - 280;
-  const y = safeY(132);
-  drawPanel(x, y, 560, 64, 0.62);
-  drawTextCentered(text, x + 280, y + 42, 26, "#fff8d9", "900");
+  const width=Math.min(740,W-64), x=safeCenterX()-width/2, y=safeY(180);
+  drawPanel(x,y,width,104,.72);
+  wrapTextCentered(text,safeCenterX(),y+30,width-40,25,"#fff8d9");
 }
 
 function roundedRect(x, y, w, h, r) {
@@ -2014,34 +2198,58 @@ function canAttachToBacteria(phage, bacteria) {
 }
 
 function clearBubbleEnergy() {
+  if (bubbleStats.energy>0) playSound("energia_terminar", {volume:0.35});
   bubbleStats.combo = 0; bubbleStats.cooldown = 0; bubbleStats.energy = 0;
 }
 
 function registerBubblePop() {
+  const wasActive=bubbleStats.energy>0;
   bubbleStats.total++;
-  bubbleStats.combo = bubbleStats.cooldown > 0 ? Math.min(10, bubbleStats.combo + 1) : 1;
+  bubbleStats.popAge = 0;
+  bubbleStats.combo = bubbleStats.energy > 0 ? 10 : bubbleStats.cooldown > 0 ? Math.min(10, bubbleStats.combo + 1) : 1;
   bubbleStats.cooldown = BUBBLE_COMBO_WINDOW;
   if (bubbleStats.energy > 0 || bubbleStats.combo >= 10) bubbleStats.energy = ENERGY_SECONDS;
+  playSound("burbuja_explotar", {volume:0.25});
+  if (bubbleStats.energy>0) playSound(wasActive ? "energia_renovar" : "energia_activar", {volume:0.45});
 }
 
 function updateBubbleEnergy(dt) {
   if (state !== State.SEARCH) return;
+  const hadEnergy=bubbleStats.energy>0, hadCombo=bubbleStats.combo>0;
+  bubbleStats.popAge += dt;
   bubbleStats.cooldown = Math.max(0, bubbleStats.cooldown - dt);
   bubbleStats.energy = Math.max(0, bubbleStats.energy - dt);
   if (bubbleStats.cooldown === 0 && bubbleStats.energy === 0) bubbleStats.combo = 0;
+  if(hadEnergy && bubbleStats.energy===0) playSound("energia_terminar", {volume:0.35});
+  else if(hadCombo && bubbleStats.combo===0) playSound("burbuja_racha_fin", {volume:0.2});
 }
 
-function drawBubbleCounter() {
-  const x = safeX(36), y = safeY(196);
-  ctx.drawImage(glowSprites.bubble, x, y - 29, 34, 34);
-  drawText(String(bubbleStats.total), x + 47, y, 32, "#d8fbff", "900");
-  const active = bubbleStats.energy > 0;
-  const text = active ? `¡SUPERENERGÍA! ${Math.ceil(bubbleStats.energy)}s` : `Racha ${bubbleStats.combo}/10`;
-  drawText(text, x, y + 39, 23, active ? "#9bffee" : "#d8fbff", "800");
-  if (active || bubbleStats.cooldown > 0) {
-    ctx.fillStyle = "#8fffe7";
-    ctx.fillRect(x, y + 54, 190 * (active ? bubbleStats.energy / ENERGY_SECONDS : bubbleStats.cooldown / BUBBLE_COMBO_WINDOW), 4);
-  }
+function getBubbleMultiplierVisual() {
+  const count = Math.min(10, bubbleStats.combo);
+  const age = bubbleStats.popAge;
+  const anchor = worldToScreen(player.x, player.y);
+  return { count, x: anchor.x, y: anchor.y - 115,
+    alpha: clamp(1 - age / 0.5, 0, 1),
+    size: (40 + count * 4) * (1 + 0.2 * Math.sin(clamp(age / 0.18, 0, 1) * Math.PI)) };
+}
+
+function drawBubbleMultiplier() {
+  const v = getBubbleMultiplierVisual();
+  if (!v.count || v.alpha <= 0) return;
+  ctx.save();
+  ctx.globalAlpha = v.alpha;
+  ctx.textAlign = "center";
+  ctx.font = `400 ${v.size}px "Lilita One", sans-serif`;
+  ctx.lineJoin = "round";
+  const text = `×${v.count}`;
+  ctx.lineWidth = 8; ctx.strokeStyle = "#74330a";
+  ctx.strokeText(text, v.x, v.y + 5);
+  ctx.fillStyle = "#c86806"; ctx.fillText(text, v.x, v.y + 5);
+  const gold = ctx.createLinearGradient(0, v.y - v.size, 0, v.y);
+  gold.addColorStop(0, "#fffda5"); gold.addColorStop(0.45, "#ffe941"); gold.addColorStop(1, "#ffb516");
+  ctx.lineWidth = 3; ctx.strokeStyle = "#fff080";
+  ctx.strokeText(text, v.x, v.y); ctx.fillStyle = gold; ctx.fillText(text, v.x, v.y);
+  ctx.restore();
 }
 
 function drawEnergyEffect() {
@@ -2058,15 +2266,12 @@ function drawEnergyEffect() {
 }
 
 function buildSilhouetteGlows() {
-  for (const key of ["head", "body", "legs", "dnaComplete", "bacteriaOutside1"]) {
+  for (const key of ["head", "body", "legs", "dnaComplete", "bacteriaOutside1", "phagePhase1", "phagePhase2", ...Array.from({length:5},(_,i)=>`bacteriaOutside${i+2}`), ...WORLD_SPRITES]) {
     const source = img[key], ratio = Math.min(1, 384 / Math.max(source.width, source.height));
     const mask = createLayer(Math.ceil(source.width * ratio), Math.ceil(source.height * ratio));
     const m = mask.getContext("2d"); m.drawImage(source, 0, 0, mask.width, mask.height);
-    m.globalCompositeOperation = "source-in"; m.fillStyle = "#ffe998"; m.fillRect(0, 0, mask.width, mask.height);
-    const glow = createLayer(mask.width + 80, mask.height + 80), c = glow.getContext("2d");
-    c.shadowColor = "#ffd95a"; c.shadowBlur = 16;
-    for (const offset of [-3, 0, 3]) c.drawImage(mask, 40 + offset, 40);
-    silhouetteGlows[key] = { image: glow, ratio: source.width / mask.width };
+    m.globalCompositeOperation = "source-in"; m.fillStyle = key.startsWith('cell_') || /^bacteriaOutside[2-6]$/.test(key) ? '#ff6868' : '#ffe998'; m.fillRect(0, 0, mask.width, mask.height);
+    silhouetteGlows[key] = { mask, sourceWidth: source.width, sourceHeight: source.height, color: key.startsWith("cell_") || /^bacteriaOutside[2-6]$/.test(key) ? "#ff3535" : "#ffd95a", cached: null };
   }
   layers.energyVignette = createLayer(320, 180);
   const c = layers.energyVignette.getContext("2d");
@@ -2075,23 +2280,54 @@ function buildSilhouetteGlows() {
   c.fillStyle = g; c.fillRect(0, 0, 320, 180);
 }
 
+// Build halos in CSS pixels so their thickness is independent of sprite size,
+// camera zoom and the canvas display scale. Keep a small bounded cache per asset.
+function getScreenGlow(glow, width, height) {
+  width = Math.max(1, Math.round(width));
+  height = Math.max(1, Math.round(height));
+  if (glow.cached?.width === width && glow.cached?.height === height) return glow.cached;
+  glow.rasters ||= new Map();
+  const cacheKey=`${width}:${height}`;
+  if(glow.rasters.has(cacheKey)) return glow.cached=glow.rasters.get(cacheKey);
+  const padding = 40;
+  const image = createLayer(width + padding * 2, height + padding * 2);
+  const c = image.getContext("2d");
+  c.shadowColor = glow.color || "#ffd95a";
+  c.shadowBlur = 12;
+  const offsets=glow.color==='#ff3535' ? [[-4,0],[4,0],[0,-4],[0,4],[0,0]] : [[-2,0],[0,0],[2,0]];
+  for (const [ox,oy] of offsets) c.drawImage(glow.mask, padding+ox, padding+oy, width, height);
+  glow.cached = { image, width, height };
+  if(glow.rasters.size>=4) glow.rasters.delete(glow.rasters.keys().next().value);
+  glow.rasters.set(cacheKey,glow.cached);
+  return glow.cached;
+}
+
 function drawSilhouetteGlow(key, x, y, scale, rotation = 0, strength = 1) {
   const glow = silhouetteGlows[key];
+  if (!glow) return;
+  const transform = ctx.getTransform();
+  const displayScale = getCanvasTransform().scale;
+  const zoom = Math.hypot(transform.a, transform.b);
+  const raster = getScreenGlow(glow, glow.sourceWidth * scale * zoom * displayScale, glow.sourceHeight * scale * zoom * displayScale);
   ctx.save();
-  ctx.globalAlpha = strength * (0.35 + 0.5 * ((Math.cos(worldTime * 4) + 1) / 2) ** 2);
-  drawImageCenter(glow.image, x, y, scale * glow.ratio, rotation);
+  ctx.setTransform(1, 0, 0, 1, transform.a * x + transform.c * y + transform.e, transform.b * x + transform.d * y + transform.f);
+  ctx.rotate(rotation + Math.atan2(transform.b, transform.a));
+  ctx.scale(1 / displayScale, 1 / displayScale);
+  ctx.globalAlpha *= strength * ((glow.color==='#ff3535' ? 0.6 : 0.35) + (glow.color==='#ff3535' ? 0.35 : 0.5) * ((Math.cos(worldTime * 4) + 1) / 2) ** 2);
+  ctx.drawImage(raster.image, -raster.image.width / 2, -raster.image.height / 2);
   ctx.restore();
 }
 
 function getAssemblyHint() {
   if (!assembly.packed) return { source: "genome", target: "head" };
   if (!assembly.joining.headBody) return { source: "head", target: "body" };
-  return { source: "legs", target: "body" };
+  return { source: "body", target: "legs" };
 }
 
 function updateConstructedPhages(dt) {
   const phages = assembly.completePhages;
   phages.forEach((p, i) => {
+    p.swimAge = (p.swimAge || 0) + dt;
     const angle = worldTime * 0.22 + i * Math.PI * 2 / TARGET_PHAGES;
     const target = { x: W / 2 + Math.cos(angle) * 320, y: H * 0.52 + Math.sin(angle) * 125 };
     const v = normalize({ x: target.x - p.x, y: target.y - p.y });
@@ -2116,7 +2352,19 @@ function updateConstructedPhages(dt) {
 }
 
 function drawConstructedPhages() {
-  assembly.completePhages.forEach((p, i) => drawPhageFrame(p.x, p.y, 0.19, p.rotation, Math.floor((worldTime + i * 0.2) * 9) % 3));
+  assembly.completePhages.forEach((p, i) => {
+    const t = smoothstep(0, 0.2, p.swimAge ?? 1);
+    ctx.save();
+    if (t < 1) {
+      ctx.globalAlpha = 1 - t;
+      drawImageCenter(img.phagePhase3, p.x, p.y, ASSEMBLY_PHASE_SCALE, p.rotation);
+    }
+    if (t > 0) {
+      ctx.globalAlpha = t;
+      drawPhageFrame(p.x, p.y, ASSEMBLY_PHASE_SCALE, p.rotation, Math.floor((worldTime + i * 0.17) * 12) % 3);
+    }
+    ctx.restore();
+  });
 }
 
 function getLysisAppearance() {
@@ -2271,14 +2519,23 @@ function updateParticles(dt) {
 }
 
 function drawParticles() {
+  ctx.save();
   for (const p of particles) {
     ctx.globalAlpha = clamp(p.life / p.max, 0, 1);
-    ctx.fillStyle = p.color;
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.globalAlpha = 1;
+    if (p.kind === "bubble") {
+      if (![State.SEARCH, State.ADSORPTION, State.ESCAPE].includes(state)) continue;
+      const point = worldToScreen(p.x, p.y);
+      const radius = p.r * (camera.zoom || 1);
+      if (point.x + radius < 0 || point.x - radius > W || point.y + radius < 0 || point.y - radius > H) continue;
+      ctx.drawImage(glowSprites.bubble, point.x - radius, point.y - radius, radius * 2, radius * 2);
+    } else {
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
+  ctx.restore();
 }
 
 function sayReplication(message) {
@@ -2573,6 +2830,7 @@ function smoothstep(edge0, edge1, x) {
 }
 
 window.addEventListener("keydown", ev => {
+  if (soundEffects.menuOpen) return;
   const key = ev.key.length === 1 ? ev.key.toLowerCase() : ev.key;
   if (ev.key === "Escape" && state !== State.INTRO) {
     resetGame();
@@ -2591,8 +2849,14 @@ window.addEventListener("keyup", ev => {
 });
 
 canvas.addEventListener("pointerdown", ev => {
-  if (isDisplayBlocked()) return;
+  if (isDisplayBlocked() || soundEffects.menuOpen) return;
   const p = screenToCanvas(ev);
+  if (state === State.LYSIS) {
+    if (!lysis.burst) pendingActionTaps++;
+    canvas.setPointerCapture(ev.pointerId);
+    ev.preventDefault();
+    return;
+  }
   if (handleUiPointerDown(p, ev.pointerId) || handleMobileControlPointerDown(p, ev.pointerId)) {
     canvas.setPointerCapture(ev.pointerId);
     ev.preventDefault();
@@ -2651,7 +2915,9 @@ restartButton.addEventListener("click", resetGame);
 menuButton.addEventListener("click", resetGame);
 
 resizeCanvasToViewport();
-loadImages()
+Promise.all([loadImages(), document.fonts ? Promise.all([
+  document.fonts.load('400 32px "Lilita One"'), document.fonts.load('800 24px Nunito'),
+]) : Promise.resolve()])
   .then(() => {
     loading.classList.add("hidden");
     init();

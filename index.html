@@ -4,9 +4,9 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Phage-Go!</title>
-    <meta name="app-version" content="2026.10.19-9">
+    <meta name="app-version" content="2026.10.19-25">
     <link rel="icon" href="data:,">
-    <link rel="stylesheet" href="style.css?v=20261019-9">
+    <link rel="stylesheet" href="style.css?v=20261019-24">
   </head>
   <body>
     <main id="app">
@@ -22,8 +22,10 @@
         </button>
       </div>
       <button id="restartButton" class="text-button hidden" type="button">Reiniciar</button>
+      <div class="top-controls">
       <button id="menuButton" class="menu-return-button hidden" type="button">Menú</button>
       <button id="fullscreenButton" class="fullscreen-button" type="button" aria-label="Pantalla completa">⛶ <span>Pantalla completa</span></button>
+      </div>
       <div id="displayNotice" class="display-notice hidden" role="status"></div>
       </div>
       <div id="rotateNotice" class="rotate-notice hidden" role="status">
@@ -34,6 +36,16 @@
         <p id="rotateStatus" class="rotate-status" role="status"></p>
       </div>
     </main>
-    <script src="game.js?v=20261019-9"></script>
+    <dialog id="soundPanel" aria-labelledby="soundTitle">
+      <header><h2 id="soundTitle">Efectos de sonido</h2><button id="soundClose" type="button">Cerrar</button></header>
+      <p>Activa o desactiva cada efecto. Puedes escucharlos antes de elegir. Sin música ni ambientes de fondo.</p>
+      <div id="soundList"></div>
+      <footer><button id="soundSave" type="button">Guardar y exportar JSON</button><p id="soundStatus" role="status"></p></footer>
+    </dialog>
+    <script src="audio/catalog.js?v=20261019-24"></script>
+    <script src="audio/sound.js?v=20261019-24"></script>
+    <script src="world-shapes.js?v=20261019-24"></script>
+    <script src="world.js?v=20261019-24"></script>
+    <script src="game.js?v=20261019-25"></script>
   </body>
 </html>

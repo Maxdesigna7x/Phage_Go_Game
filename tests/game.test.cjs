@@ -3,16 +3,19 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 
-function game() {
+function game(effects) {
   const listeners = {};
   const nodes = {};
   const gradient = { addColorStop() {} };
-  const context = new Proxy({}, { get: (o, k) => o[k] ?? (k.startsWith('create') ? () => gradient : k === 'measureText' ? text => ({ width: text.length * 12 }) : () => {}), set: (o,k,v) => (o[k] = v, true) });
+  const context = new Proxy({}, { get: (o, k) => o[k] ?? (k.startsWith('create') ? () => gradient : k === 'getTransform' ? () => ({a:1,b:0,c:0,d:1,e:0,f:0}) : k === 'measureText' ? text => ({ width: text.length * 12 }) : () => {}), set: (o,k,v) => (o[k] = v, true) });
   function node(id) {
     return nodes[id] ||= { style: {}, classList: { add() {}, remove() {}, toggle() {} }, addEventListener(event, handler) { listeners[id + ':' + event] = handler; }, getContext: () => context, getBoundingClientRect() { const field = nodes.playfield.style; return { left: parseFloat(field.left) || 0, top: parseFloat(field.top) || 0, width: parseFloat(this.style.width) || 1600, height: parseFloat(this.style.height) || 900 }; }, setPointerCapture() {} };
   }
   const sandbox = { console, performance: { now: () => sandbox.now }, now: 1000, document: { hidden: false, getElementById: node, createElement: () => node('cache' + Math.random()), addEventListener(event, handler) { listeners['document:' + event] = handler; } }, window: { innerWidth: 1280, innerHeight: 720, matchMedia: () => ({ matches: false }), addEventListener(event, handler) { listeners['window:' + event] = handler; } }, navigator: { maxTouchPoints: 0, userAgent: '' }, requestAnimationFrame() {}, setTimeout: () => 1, clearTimeout() {} };
+  if (effects) sandbox.window.SFX=effects;
+  sandbox.atob=atob;
   vm.createContext(sandbox);
+  for (const file of ["world-shapes.js","world.js"]) vm.runInContext(fs.readFileSync(require("node:path").join(__dirname,"..",file),"utf8"),sandbox);
   let source = fs.readFileSync(require('node:path').join(__dirname, '../game.js'), 'utf8');
   source = source.slice(0, source.lastIndexOf('\nresizeCanvasToViewport();'));
   vm.runInContext(source, sandbox);
@@ -73,9 +76,9 @@ test('lysis never decays, holding does not add taps, ten taps release a swarm of
 test('rapid touch taps between animation frames all count, keyboard repeat is ignored', () => {
   const { run, listeners } = game();
   run('startGame(GameMode.NORMAL); setState(State.LYSIS); mobileControls=true; render(0);');
-  const point = run('({x:uiButtons.find(b=>b.id==="action").x+20,y:uiButtons.find(b=>b.id==="action").y+20})');
+  assert.equal(run('uiButtons.some(b=>b.id==="action")'), false);
   for(let i=0;i<4;i++) {
-    run(`handleUiPointerDown({x:${point.x},y:${point.y}},7)`);
+    listeners['game:pointerdown']({clientX:100+i*100,clientY:200,pointerId:7,preventDefault(){}});
     listeners['game:pointerup']({clientX:0,clientY:0,pointerId:7});
   }
   run('loop(16);');
@@ -467,11 +470,11 @@ test('assembly hints glow only the movable source, then its destination during d
     if(glows.join()!=='head') return false;
     dragItem=null; assembly.packed=true; glows.length=0;
     for(const p of assembly.activeParts) drawPart(p);
-    if(glows.join()!=='head') return false;
+    if(glows.join()!=='phagePhase1') return false;
     assembly.joining.headBody=true; glows.length=0;
     for(const p of assembly.activeParts) drawPart(p);
     drawSilhouetteGlow=original;
-    return glows.join()==='legs';
+    return glows.join()==='phagePhase2';
   })()`),true);
 });
 
@@ -511,4 +514,379 @@ test('mobile browsers supporting fullscreen pause until fullscreen is entered', 
   assert.equal(run('isDisplayBlocked()'),true);
   sandbox.document.fullscreenElement={};run('resizeCanvasToViewport();');
   assert.equal(run('isDisplayBlocked()'),false);
+});
+
+
+test('injection control is on the right and lysis has no action button', () => {
+  const { run } = game();
+  assert.equal(run(`(() => {
+    mobileControls=true; setState(State.INJECTION); beginUiFrame(); drawMobileControls();
+    const action=uiButtons.find(b=>b.id==='action');
+    if(!action || action.x<W/2 || getMobileActionLabel()!=='Inyectar') return false;
+    setState(State.LYSIS); beginUiFrame(); drawMobileControls();
+    return !uiButtons.some(b=>b.id==='action');
+  })()`),true);
+});
+
+test('silhouette halos use fixed screen blur and reuse bounded per-asset rasters', () => {
+  const { run } = game();
+  assert.equal(run(`(() => {
+    const glow=silhouetteGlows.head;
+    const small=getScreenGlow(glow,40,60);
+    const again=getScreenGlow(glow,40,60);
+    const large=getScreenGlow(glow,400,600);
+    return small===again && small.image.width-40===large.image.width-400
+      && small.image.height-60===large.image.height-600 && glow.cached===large;
+  })()`), true);
+});
+
+test('combo popup grows to ten, fades in half a second and restarts on each pop', () => {
+  const { run } = game();
+  assert.equal(run(`(() => {
+    startGame(GameMode.NORMAL); registerBubblePop();
+    const first=getBubbleMultiplierVisual(); updateBubbleEnergy(0.25);
+    if(Math.abs(getBubbleMultiplierVisual().alpha-0.5)>1e-8) return false;
+    updateBubbleEnergy(0.25); if(getBubbleMultiplierVisual().alpha!==0) return false;
+    for(let i=0;i<12;i++) registerBubblePop();
+    const max=getBubbleMultiplierVisual();
+    if(max.count!==10 || max.size<=first.size || max.alpha!==1) return false;
+    updateBubbleEnergy(4); registerBubblePop();
+    return getBubbleMultiplierVisual().count===10 && bubbleStats.energy===ENERGY_SECONDS;
+  })()`),true);
+});
+
+test('nucleotide caption is outside tray and feedback uses title rather than play area', () => {
+  const { run } = game();
+  assert.equal(run(`(() => {
+    for(const width of [1200,1600,2077]) {
+      W=width; updateViewportSafeArea();
+      const l=getNucleotideLayout();
+      if(l.trayTitleY>=l.trayY || l.nucY<=l.trayY || l.nucY>=l.trayY+l.trayH) return false;
+      if(l.trayTitleY-l.trayTitleSize<l.slotsY+l.slotH/2) return false;
+    }
+    return true;
+  })()`),true);
+});
+
+
+test('assembly uses aligned phase sprites and renders a joined phage only once', () => {
+  const { run } = game();
+  assert.equal(run(`(() => {
+    createPhagePartsFromDna({id:1});
+    const head=assembly.activeParts.find(p=>p.kind==='head');
+    const body=assembly.activeParts.find(p=>p.kind==='body');
+    const genome=assembly.activeParts.find(p=>p.kind==='genome');
+    const legs=assembly.activeParts.find(p=>p.kind==='legs');
+    genome.x=head.x; genome.y=head.y; trySnapParts();
+    const first=getPartAppearance(head);
+    if(!assembly.packed || first.key!=='phagePhase1' || assembly.activeParts.includes(genome)) return false;
+    head.x=body.x; head.y=body.y; trySnapParts();
+    const second=getPartAppearance(body);
+    if(!assembly.joining.headBody || getPartAppearance(head)!==null || second.key!=='phagePhase2') return false;
+    // Both phases use the same full-canvas origin relative to the visible head.
+    if(Math.abs(second.y-(head.y+(234.5-103)*ASSEMBLY_PHASE_SCALE))>1e-8) return false;
+    legs.x=body.x; legs.y=body.y; trySnapParts();
+    const complete=assembly.completePhages[0];
+    if(assembly.completed!==1 || assembly.activeParts.length || complete.x!==second.x || complete.y!==second.y) return false;
+    const original=drawImageCenter, keys=[];
+    drawImageCenter=(image)=>keys.push(image);
+    drawConstructedPhages(); drawImageCenter=original;
+    return keys.length===1 && keys[0]===img.phagePhase3;
+  })()`),true);
+});
+
+
+test('bubble debris stays in world space and renders bubble sprites through camera zoom', () => {
+  const { run } = game();
+  assert.equal(run(`(() => {
+    startGame(GameMode.NORMAL); particles=[];
+    spawnBubblePop(700,450,60);
+    if(!particles.length || particles.some(p=>p.kind!=='bubble' || p.space!=='world')) return false;
+    const p=particles[0], worldX=p.x, worldY=p.y;
+    const draws=[], original=ctx.drawImage;
+    ctx.drawImage=(...args)=>draws.push(args);
+    camera={x:100,y:50,zoom:1}; drawParticles();
+    const first=draws[0]; draws.length=0;
+    camera={x:200,y:80,zoom:2}; drawParticles();
+    const next=draws[0]; ctx.drawImage=original;
+    if(p.x!==worldX || p.y!==worldY || first[0]!==glowSprites.bubble || next[0]!==glowSprites.bubble) return false;
+    if(Math.abs(next[1]-(first[1]-100)*2)>1e-8 || Math.abs(next[2]-(first[2]-30)*2)>1e-8 || next[3]!==first[3]*2) return false;
+    for(let i=0;i<100;i++) spawnBubblePop(700,450,80);
+    if(particles.length>QUALITY.particlesMax) return false;
+    updateParticles(1); return particles.length===0;
+  })()`),true);
+});
+
+
+test('constructed swimmers animate all three leg frames while preserving position and rotation', () => {
+  const { run } = game();
+  assert.equal(run(`(() => {
+    assembly.completePhages=[{x:700,y:400,rotation:0.7,swimAge:1}];
+    const original=drawPhageFrame, frames=[];
+    drawPhageFrame=(x,y,scale,rotation,frame)=>frames.push({x,y,scale,rotation,frame});
+    for(const t of [0,0.09,0.18]) {worldTime=t;drawConstructedPhages();}
+    drawPhageFrame=original;
+    return frames.map(f=>f.frame).join()==='0,1,2' && frames.every(f=>f.x===700 && f.y===400 && f.rotation===0.7 && f.scale===ASSEMBLY_PHASE_SCALE);
+  })()`),true);
+});
+
+test('player swim sound shares the leg cycle clock, includes inertia and stops on docking', () => {
+  const sounds=[], stops=[];
+  const { run } = game({play:(name,options)=>sounds.push({name,options}),stop:name=>stops.push(name),loop(){},stopAll(){},menuOpen:false});
+  run('startGame(GameMode.NORMAL); player.vx=100; player.vy=0; player.collisionTimer=0;');sounds.length=0;
+  run('player.animTime=0;updateSoundEffects(false);player.animTime=0.09;updateSoundEffects(false);player.animTime=0.18;updateSoundEffects(false);');
+  assert.equal(sounds.filter(s=>s.name==='fago_nadar').length,1);
+  run('player.animTime=0.251;updateSoundEffects(false);');
+  const swim=sounds.filter(s=>s.name==='fago_nadar');assert.equal(swim.length,2);
+  assert.equal(swim[0].options.duration,0.16);
+  run('state=State.ADSORPTION;updateSoundEffects(false);');
+  assert.deepEqual(stops,['fago_nadar']);
+  run('state=State.SEARCH;player.vx=0;player.vy=0;player.animTime=1;updateSoundEffects(false);');
+  assert.equal(sounds.filter(s=>s.name==='fago_nadar').length,2);
+});
+
+test('all infection skins share one full-canvas transform including interior and final fragments', () => {
+  const {run}=game();
+  assert.equal(run(`(() => {
+    const keys=['bacteriaInside',...Array.from({length:6},(_,i)=>'bacteriaOutside'+(i+1))];
+    const original=drawImageCenter, draws=[];
+    drawImageCenter=(image,x,y,scale,rotation)=>draws.push({x,y,scale,rotation});
+    for(const key of keys) {
+      if(!ASSETS[key].includes('/new_size/')) return false;
+      img[key]={width:1001,height:535};
+      drawBacteriaSkin(key,700,450,1.45,0.6);
+    }
+    drawImageCenter=original;
+    return draws.length===7 && draws.every(d=>d.x===700 && d.y===450 && d.scale===1.45 && d.rotation===0.6);
+  })()`),true);
+});
+
+test('background infection phases preserve their shared scale instead of fitting each damaged silhouette', () => {
+  const {run}=game();
+  assert.equal(run(`(() => {
+    const original=drawDepthImage, draws=[];
+    drawDepthImage=(key,x,y,scale,rotation)=>draws.push({x,y,scale,rotation});
+    const cell={layer:1,x:700,y:400,diameter:106,rotation:0.7,alpha:0.22};
+    for(let i=1;i<=6;i++) {
+      img['bacteriaOutside'+i]={width:1001,height:535};
+      drawBackgroundSlot('bacteriaOutside'+i,cell);
+    }
+    drawDepthImage=original;
+    return draws.every(d=>d.x===draws[0].x && d.y===draws[0].y && d.scale===106/805 && d.rotation===0.7);
+  })()`),true);
+});
+
+
+test('every assembly stage highlights its movable source then only its destination while held', () => {
+  const { run } = game();
+  assert.equal(run(`(() => {
+    createPhagePartsFromDna({id:1});
+    const original=drawSilhouetteGlow;
+    const glows=[]; drawSilhouetteGlow=key=>glows.push(key);
+    const stages=[
+      {packed:false,joined:false,source:'genome',idle:'dnaComplete',target:'head'},
+      {packed:true,joined:false,source:'head',idle:'phagePhase1',target:'body'},
+      {packed:true,joined:true,source:'body',idle:'phagePhase2',target:'legs'},
+    ];
+    for(const stage of stages) {
+      assembly.packed=stage.packed; assembly.joining.headBody=stage.joined;
+      dragItem=null; glows.length=0;
+      for(const p of assembly.activeParts) drawPart(p);
+      if(glows.join()!==stage.idle) return false;
+      dragItem=assembly.activeParts.find(p=>p.kind===stage.source);glows.length=0;
+      for(const p of assembly.activeParts) drawPart(p);
+      if(glows.join()!==stage.target) return false;
+      dragItem=null;glows.length=0;
+      for(const p of assembly.activeParts) drawPart(p);
+      if(glows.join()!==stage.idle) return false;
+    }
+    drawSilhouetteGlow=original;return true;
+  })()`),true);
+});
+
+test('joined phage can be picked by its head without jumping and dragged onto fibres to complete', () => {
+  const {run}=game();
+  assert.equal(run(`(() => {
+    setState(State.PART_ASSEMBLY);createPhagePartsFromDna({id:1});
+    const head=assembly.activeParts.find(p=>p.kind==='head');
+    const body=assembly.activeParts.find(p=>p.kind==='body');
+    const genome=assembly.activeParts.find(p=>p.kind==='genome');
+    const legs=assembly.activeParts.find(p=>p.kind==='legs');
+    genome.x=head.x;genome.y=head.y;trySnapParts();
+    head.x=body.x;head.y=body.y;trySnapParts();
+    const x=body.x,y=body.y;
+    mouse.x=head.x;mouse.y=head.y-20;mouse.justDown=true;mouse.down=true;
+    updatePartAssembly(0);
+    if(dragItem!==body || body.x!==x || body.y!==y) return false;
+    mouse.justDown=false;
+    mouse.x=legs.x-body.grabOffsetX;mouse.y=legs.y-body.grabOffsetY;
+    updatePartAssembly(0);
+    mouse.down=false;mouse.justUp=true;updatePartAssembly(0);
+    return assembly.completed===1 && assembly.activeParts.length===0 && dragItem===null;
+  })()`),true);
+});
+
+
+test('all loaded sprites are WebP, including both nucleotide slots and draggable pieces', () => {
+  const {run}=game();
+  assert.equal(run(`Object.values(ASSETS).every(path=>path.startsWith('assets_webp/') && path.endsWith('.webp'))`),true);
+  assert.equal(run(`['A','T','C','G'].every(code=>getNucleotideImage(code)===img['nuc'+code] && ASSETS['nuc'+code].endsWith('.webp'))`),true);
+});
+
+test('biosynthesis progress is below the cell and above the footer explanation', () => {
+  const {run}=game();
+  assert.equal(run(`(() => {
+    const original=drawProgress, bars=[];
+    drawProgress=(x,y,w,h)=>bars.push({x,y,w,h});
+    drawBiosynthesis();drawProgress=original;
+    return bars.length===1 && bars[0].y>750 && bars[0].y+bars[0].h<safeBottom(0,48)-25;
+  })()`),true);
+});
+
+test('world blocks contain exactly half cells, one quarter healthy and one quarter damaged bacteria', () => {
+  const {run}=game();
+  assert.equal(run(`(() => {
+    for(let gx=-80;gx<80;gx+=2) for(let gy=-80;gy<80;gy+=2) {
+      const kinds=[worldSlotKind(gx,gy),worldSlotKind(gx+1,gy),worldSlotKind(gx,gy+1),worldSlotKind(gx+1,gy+1)];
+      if(kinds.filter(k=>k==='cell').length!==2 || kinds.filter(k=>k==='healthy').length!==1 || kinds.filter(k=>k==='broken').length!==1) return false;
+    }
+    let cells=0,healthy=0,broken=0;
+    for(let i=0;i<100;i++) {
+      player.x=i*7911;player.y=-i*6177;updateProceduralBacteriaIfNeeded(true);
+      cells+=cellField.length;healthy+=bacteriaField.filter(isBacteriaInteractable).length;broken+=bacteriaField.filter(b=>!isBacteriaInteractable(b)).length;
+      if(cellField.length+bacteriaField.length>49) return false;
+    }
+    const total=cells+healthy+broken;
+    return Math.abs(cells/total-.5)<.04 && Math.abs(healthy/total-.25)<.04 && Math.abs(broken/total-.25)<.04;
+  })()`),true);
+});
+
+test('cell types have information, controlled sizes, three WebP variants and cannot be infected', () => {
+  const {run}=game();
+  assert.equal(run(`(() => {
+    for(const type of FOREGROUND_CELL_TYPES) for(let variant=0;variant<3;variant++) {
+      const cell=makeWorldCell(type,800,450,variant);
+      if(isBacteriaInteractable(cell) || cell.diameter<90 || cell.diameter>670) return false;
+      if(!cellEncounterText(cell).includes(WORLD_CELL_TYPES[type].name) || !cellEncounterText(cell).includes('No puedes infectar')) return false;
+      if(!ASSETS[cell.sprite].endsWith('.webp') || !collisionShape(cell.sprite)) return false;
+      if(cell.movable!==(type==='plaqueta')) return false;
+    }
+    return !FOREGROUND_CELL_TYPES.includes('bacilo') && !FOREGROUND_CELL_TYPES.includes('espirilo') && WORLD_SPRITES.length===30;
+  })()`),true);
+});
+
+test('alpha contacts preserve a platelet concavity even after rotating the sprite', () => {
+  const {run}=game();
+  assert.equal(run(`(() => {
+    const shape=collisionShape('cell_plaqueta_01');
+    if(shape.width!==512 || signedSpriteDistance(shape,335,47)<70 || signedSpriteDistance(shape,268,257)>-20) return false;
+    const entity={sprite:'cell_plaqueta_01',x:800,y:450,rotation:1.17,scale:1};
+    const point=localToWorld(entity.x,entity.y,entity.rotation,335-256,47-256);
+    const contact=spriteSurface(entity,point);
+    return Math.abs(contact.distance-signedSpriteDistance(shape,335,47))<1e-6 && Math.abs(Math.hypot(contact.normal.x,contact.normal.y)-1)<1e-6;
+  })()`),true);
+});
+
+test('platelets receive player impulse, drift with drag, and persist only in the active neighbourhood', () => {
+  const {run}=game();
+  assert.equal(run(`(() => {
+    startGame(GameMode.NORMAL);bacteriaField=[];
+    const cell=makeWorldCell('plaqueta',800,450,0);cellField=[cell];
+    player.x=760;player.y=450;player.rotation=Math.PI/2;player.vx=200;player.vy=0;
+    const oldX=cell.x;resolveBacteriaPhysics();
+    if(cell.vx<=0 || cell.x<=oldX || player.vx>=200 || !toastMessage.includes('Plaqueta')) return false;
+    const vx=cell.vx,x=cell.x;updateWorldCells(.1);
+    if(cell.vx>=vx || cell.x<=x) return false;
+    player.x=330;player.y=470;updateProceduralBacteriaIfNeeded(true);
+    const retained=cellField[0];if(!retained) return false;
+    retained.x+=5;updateProceduralBacteriaIfNeeded(true);
+    if(!cellField.includes(retained)) return false;
+    player.x=90000;player.y=90000;updateProceduralBacteriaIfNeeded(true);
+    return !cellField.includes(retained) && cellField.length+bacteriaField.length<=49;
+  })()`),true);
+});
+
+test('background retains old diversity, adds every new family and keeps ambient infections off human cells', () => {
+  const {run}=game();
+  assert.equal(run(`(() => {
+    const seen=new Set();
+    for(let i=0;i<50;i++) {
+      camera.x=i*1937;camera.y=-i*647;
+      for(let layer=0;layer<3;layer++) for(const cell of getBackgroundCells(layer)) seen.add(cell.key);
+      updateAmbientLife(0);
+      for(const scene of ambientLife) if(scene && (scene.kind==='cell' || scene.key.startsWith('cell_'))) return false;
+    }
+    for(let i=1;i<=8;i++) if(!seen.has('bg'+i)) return false;
+    for(const type of Object.keys(WORLD_CELL_TYPES)) if(![...seen].some(key=>key.startsWith('cell_'+type+'_'))) return false;
+    return true;
+  })()`),true);
+});
+
+test('incompatible world objects use red silhouette glow, and the active stage is more than twice the others', () => {
+  const {run}=game();
+  assert.equal(run(`(() => {
+    if(silhouetteGlows.cell_plaqueta_01.color!=='#ff3535' || silhouetteGlows.bacteriaOutside6.color!=='#ff3535') return false;
+    const original=drawImageCenter,scales=[];
+    drawImageCenter=(image,x,y,scale)=>{if([img.stage0,img.stage1,img.stage2,img.stage3,img.stage4,img.stage5].includes(image))scales.push(scale);};
+    drawStageIcons(3,'Replicación');drawImageCenter=original;
+    return scales.length===6 && scales[2]>scales[0]*2 && scales.filter(s=>s===scales[2]).length===1;
+  })()`),true);
+});
+
+test('compass renders a bacterium icon and points only toward a compatible target', () => {
+  const {run}=game();
+  assert.equal(run(`(() => {
+    startGame(GameMode.NORMAL);attachCandidate=null;
+    bacteriaField=[makeBacteria(player.x+800,player.y+600,.8,0,1),makeBacteria(player.x-100,player.y,.8,0,6)];
+    const originalImage=drawImageCenter,originalSkin=drawBacteriaSkin,originalText=drawTextCentered;
+    const icons=[],arrows=[],texts=[];
+    drawImageCenter=(image,x,y,scale,rotation)=>{if(image===img.arrow)arrows.push(rotation);};
+    drawBacteriaSkin=(key)=>icons.push(key);drawTextCentered=text=>texts.push(text);
+    drawHud();drawImageCenter=originalImage;drawBacteriaSkin=originalSkin;drawTextCentered=originalText;
+    return icons.includes('bacteriaOutside1') && arrows.some(a=>Math.abs(a-Math.atan2(600,800))<1e-8) && !texts.includes('Bacteria compatible');
+  })()`),true);
+});
+
+test('world sprites spawn without overlapping and the player begins in clear water', () => {
+  const {run}=game();
+  assert.equal(run(`(() => {
+    startGame(GameMode.NORMAL);
+    for(const object of [...bacteriaField,...cellField]) for(const probe of getPlayerCollisionProbes()) if(spriteSurface(object,probe).distance<probe.r) return false;
+    for(let i=0;i<50;i++) {
+      player.x=i*5917;player.y=-i*6177;updateProceduralBacteriaIfNeeded(true);
+      const objects=[...bacteriaField,...cellField];
+      for(let j=0;j<objects.length;j++) for(let k=j+1;k<objects.length;k++) {
+        const a=objects[j],b=objects[k];
+        const ra=collisionShape(a.sprite || 'bacteriaOutside'+a.variant).radius*a.scale;
+        const rb=collisionShape(b.sprite || 'bacteriaOutside'+b.variant).radius*b.scale;
+        if(Math.hypot(a.x-b.x,a.y-b.y)<ra+rb+5) return false;
+      }
+    }
+    return true;
+  })()`),true);
+});
+
+test('pushing a platelet keeps leg frames and swim audio running without repeating the collision sound', () => {
+  const sounds=[];
+  const {run}=game({play:name=>sounds.push(name),loop(){},stop(){},stopAll(){},menuOpen:false});
+  run(`startGame(GameMode.NORMAL);bacteriaField=[];
+    cellField=[makeWorldCell('plaqueta',800,450,0)];
+    player.x=760;player.y=450;player.rotation=Math.PI/2;player.vx=200;player.vy=0;
+    keys.add('ArrowRight');resolveBacteriaPhysics();`);
+  assert.equal(run('player.collisionTimer'),0);
+  assert.ok(run('cellField[0].vx')>0);
+  sounds.length=0;
+  const frames=[];
+  for(const time of [0,0.09,0.18,0.251]) {
+    run(`player.animTime=${time};registerWorldContact(cellField[0]);updateSoundEffects(false);`);
+    frames.push(run('getPlayerFrameIndex()'));
+  }
+  assert.deepEqual(frames,[0,1,2,0]);
+  assert.equal(sounds.filter(s=>s==='fago_nadar').length,2);
+  assert.equal(sounds.filter(s=>s==='choque_suave').length,0);
+  run(`registerWorldContact(makeWorldCell('eritrocito',800,450,0));`);
+  assert.equal(run('getPlayerFrameIndex()'),3);
+  const before=sounds.filter(s=>s==='fago_nadar').length;
+  run('updateSoundEffects(false);');
+  assert.equal(sounds.filter(s=>s==='fago_nadar').length,before);
 });

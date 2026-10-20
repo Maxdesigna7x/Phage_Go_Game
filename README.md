@@ -22,7 +22,7 @@ En ordenador: flechas o WASD y Espacio. La tarjeta «Mover» alterna movimiento 
 
 - Duplica el ADN y coloca cada nucleótido sobre su misma letra: A sobre A, T sobre T, C sobre C y G sobre G.
 - La maquinaria bacteriana fabrica las piezas. Guarda el ADN en la cabeza y ensambla cabeza, cola y fibras.
-- Completa la lisis con diez pulsaciones o toques en **Liberar**. La barra no retrocede. La destrucción recorre todos los assets intermedios y la explosión final; una transición breve evita saltárselos al pulsar muy rápido.
+- Completa la lisis con diez pulsaciones o toques en cualquier parte de la pantalla. La barra no retrocede. La destrucción recorre todos los assets intermedios y la explosión final; una transición breve evita saltárselos al pulsar muy rápido.
 - La bacteria se acerca y gira suavemente al entrar. La inyección y los minijuegos comparten el mismo asset interior, escala y centro.
 - Tras la lisis salen 18 fagos. La cámara sigue al más rápido y se aleja gradualmente hasta devolverte el control de ese mismo fago, sin cambiar su posición. Ambos modos continúan explorando después de cada ciclo.
 
@@ -32,7 +32,7 @@ Las ayudas de ADN y ensamblaje usan un glow pulsante siguiendo la silueta del sp
 
 ## Mundo y rendimiento
 
-Fuera de las bacterias puedes explotar burbujas. Un contador flotante muestra el total y la racha, sin panel. Diez burbujas con menos de 3,5 segundos entre ellas activan ocho segundos de superenergía: el fago acelera y su velocidad máxima aumenta un 65 %, con un efecto suave en los bordes de la pantalla. Cada burbuja adicional renueva la energía. Infectar una bacteria cancela el efecto, conservando el total de burbujas. Los aros se han eliminado.
+Fuera de las bacterias puedes explotar burbujas. Solo se muestra el multiplicador animado sobre el fago; el total de burbujas no se dibuja. Diez burbujas con menos de 3,5 segundos entre ellas activan ocho segundos de superenergía: el fago acelera y su velocidad máxima aumenta un 65 %, con un efecto suave en los bordes de la pantalla. Cada burbuja adicional renueva la energía. Infectar una bacteria cancela el efecto, conservando el total de burbujas. Los aros se han eliminado.
 
 Las tres capas de fondo conservan los colores originales y la composición con transparencia del aspecto anterior. Se descartó el tinte azul uniforme. La profundidad aumenta por capa, manteniendo un tamaño similar dentro de cada una (±7 %), independientemente de las dimensiones del asset. Se usan los ocho sprites originales de fondo. Las burbujas y los tres fotogramas de los fagos se almacenan una vez, sin filtros por fotograma.
 
@@ -49,3 +49,21 @@ Las pruebas cubren acople, control multitáctil, lisis, ADN y empaquetado, conti
 ## Publicación
 
 La aplicación se publica mediante GitHub Pages desde la raíz de la rama `main`: https://maxdesigna7x.github.io/Phage_Go_Game/
+
+## Nuevos sprites
+
+El ensamblaje usa `Phage_phase_1.webp` al empaquetar ADN, `Phage_phase_2.webp` al unir cabeza y cola, y `Phage_phase_3.webp` al completar las fibras. Comparten lienzo de 354×469 y se conservan sus márgenes para mantener alineadas las piezas entre fases.
+
+Las reglas y el comando de conversión de imágenes están en [AGENTS.md](AGENTS.md). Los WebP nuevos se generan con calidad 90, método 6, transparencia y dimensiones originales.
+
+## Efectos de sonido
+
+El botón provisional de sonidos se ha retirado. Se conserva la selección de efectos guardada en el navegador; los valores predeterminados se definen en `audio/settings.json`. No hay música ni ambientes continuos de fondo. Se carga bajo demanda la versión comprimida más pequeña compatible de cada efecto. Ver [audio/README.md](audio/README.md) para el formato de configuración.
+
+Las bacterias de infección usan el interior y las seis fases exteriores de `assets_webp/new_size/`, convertidas desde los PNG de lienzo compartido 1001×535. El centro, la escala y los márgenes se conservan al cambiar de fase; los restos finales se expanden dentro del mismo lienzo. Esto también se aplica a los ciclos de infección del fondo.
+
+## Células y colisiones
+
+El mundo combina 50 % de posiciones no bacterianas, 25 % de bacterias sanas y 25 % de bacterias rotas. Incluye tres variantes de cada familia celular, información al chocar y glow rojo para elementos incompatibles. Las plaquetas reciben empujones, giran y frenan con resistencia. Las colisiones siguen campos precalculados de alfa, incluidos entrantes y huecos. La brújula usa icono de bacteria y flecha; la etapa activa se muestra a más del doble del tamaño de las restantes.
+
+La distribución visible puede variar con la cámara y el ciclo de infección. Los tamaños son una adaptación jugable. Decisiones de planos, tamaños, conversión y validación en [docs/PLAN-MUNDO-CELULAS.md](docs/PLAN-MUNDO-CELULAS.md).
