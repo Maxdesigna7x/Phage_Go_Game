@@ -7,7 +7,7 @@ const output=process.env.PHAGE_TEST_OUTPUT || 'tmp/browser-enemies';
 const url=process.env.PHAGE_TEST_URL || 'http://127.0.0.1:8765/';
 fs.mkdirSync(output,{recursive:true});
 (async()=>{
- const browser=await chromium.launch({headless:true,args:['--no-sandbox']});
+ const browser=await chromium.launch({headless:true,executablePath:process.env.PHAGE_CHROME_PATH,args:['--no-sandbox']});
  const results=[];
  try {
   for(const mobile of [false,true]) {
@@ -29,8 +29,26 @@ fs.mkdirSync(output,{recursive:true});
    assert.equal(await page.evaluate(()=>macrophages.length),0);
    assert.equal(await page.evaluate(()=>state),'search');
    await page.click('#menuButton');await page.click('#hardButton');
+   await page.evaluate(()=>{
+    const originalSpawn=spawnMacrophage;
+    window.spawnChecks=[];
+    spawnMacrophage=()=>{
+     const spawned=originalSpawn();
+     if(spawned) {
+      const e=macrophages[0],corners=[];
+      const width=Math.max(...['idle','reach','closed'].map(phase=>img['macrofago_'+phase].width));
+      const height=Math.max(...['idle','reach','closed'].map(phase=>img['macrofago_'+phase].height));
+      for(const x of [-width/2,width/2])for(const y of [-height/2,height/2]) {
+       const p=localToWorld(e.x,e.y,e.rotation,x*e.scale,y*e.scale);corners.push(worldToScreen(p.x,p.y));
+      }
+      spawnChecks.push(corners.every(p=>p.x<0) || corners.every(p=>p.x>W) || corners.every(p=>p.y<0) || corners.every(p=>p.y>H));
+     }
+     return spawned;
+    };
+   });
    await page.evaluate(()=>{for(let i=0;i<310;i++)update(1/60,false,0);render(0);});
    assert.equal(await page.evaluate(()=>macrophages.length),1);
+   assert.deepEqual(await page.evaluate(()=>spawnChecks),[true]);
    // Controlled open-water encounter exercises the live state machine and actual alpha fields.
    await page.evaluate(()=>{
     bacteriaField=[];cellField=[];macrophageGrace=0;
@@ -89,8 +107,25 @@ fs.mkdirSync(output,{recursive:true});
    });
    assert.ok(pushing.finite && pushing.bacteriumX>580 && pushing.enemyX>20,JSON.stringify(pushing));
    await page.screenshot({path:`${output}/${mobile?'mobile':'desktop'}-pushing.png`});
+   for(const [name,dx,dy] of [['right',700,0],['left',-700,0],['top',0,-700],['bottom',0,700]]) {
+    const warning=await page.evaluate(({dx,dy})=>{
+     startGame(GameMode.HARD);macrophageGrace=0;
+     camera={x:player.x-W/2,y:player.y-H/2,zoom:1};
+     macrophages=[makeMacrophage(player.x+dx,player.y+dy)];
+     const indicator=macrophageEdgeWarning();
+     const x=Math.max(0,Math.min(W-1,Math.round(indicator.x))),y=Math.max(0,Math.min(H-1,Math.round(indicator.y)));
+     const opposite={x:dx?W-1-x:x,y:dy?H-1-y:y};
+     const originalDraw=drawMacrophageEdgeWarning;drawMacrophageEdgeWarning=()=>{};render(0);
+     const before=[...ctx.getImageData(x,y,1,1).data],otherBefore=[...ctx.getImageData(opposite.x,opposite.y,1,1).data];
+     drawMacrophageEdgeWarning=originalDraw;render(0);
+     return {indicator,before,after:[...ctx.getImageData(x,y,1,1).data],otherBefore,otherAfter:[...ctx.getImageData(opposite.x,opposite.y,1,1).data]};
+    },{dx,dy});
+    assert.ok(warning.after[0]-warning.after[1]>warning.before[0]-warning.before[1]+25,JSON.stringify({name,warning}));
+    assert.deepEqual(warning.otherAfter,warning.otherBefore);
+    await page.screenshot({path:`${output}/${mobile?'mobile':'desktop'}-warning-${name}.png`});
+   }
    assert.deepEqual(errors,[]);
-   results.push({device:mobile?'mobile':'desktop',easy:'no enemies',hard:'spawned',capture:'game over',menu:'pointer and automatic return',pushing,errors});
+   results.push({device:mobile?'mobile':'desktop',easy:'no enemies',hard:'spawned entirely offscreen',warning:'red edge follows all four directions',capture:'game over',menu:'pointer and automatic return',pushing,errors});
    await context.close();
   }
   console.log(JSON.stringify(results,null,2));

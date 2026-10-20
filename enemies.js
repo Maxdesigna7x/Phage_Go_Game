@@ -5,6 +5,7 @@ const MACROPHAGE = Object.freeze({
   windupSeconds: 1.15, closeSeconds: 0.65, captureSeconds: 0.24,
   captureRadius: 88, recoverySeconds: 2, graceSeconds: 3,
   menuSeconds: 6, maxActive: 1,
+  spawnPadding: 96, warningNear: 180, warningFar: 1050,
 });
 let macrophages = [];
 let macrophageSpawnTimer = 4;
@@ -41,8 +42,7 @@ function canMacrophagePush(entity) { return entity!==targetBacteria; }
 
 function macrophageClearance(point, onlyAnchored = false) {
   let clearance = Infinity;
-  for (const obstacle of macrophageObstacles()) {
-    if(onlyAnchored && canMacrophagePush(obstacle)) continue;
+  for (const obstacle of onlyAnchored ? (targetBacteria ? [targetBacteria] : []) : macrophageObstacles()) {
     const shape = collisionShape(obstacle.sprite || `bacteriaOutside${obstacle.variant}`);
     if (!shape) continue;
     const distance = Math.hypot(point.x-obstacle.x, point.y-obstacle.y);
@@ -73,16 +73,73 @@ function spawnMacrophage() {
   if (gameMode !== GameMode.HARD || state !== State.SEARCH || macrophages.length >= MACROPHAGE.maxActive) return false;
   // Safe placement is independent of the world's fixed healthy/broken/cell proportions.
   const offset = seeded(hash2(Math.floor(player.x/600), Math.floor(player.y/600), ++macrophageSerial))*Math.PI*2;
-  for (const radius of [780, 960, 1140]) for (let i=0; i<24; i++) {
+  for (let radius=780; radius<ACTIVE_RADIUS-MACROPHAGE.spawnPadding; radius+=180) for (let i=0; i<24; i++) {
     const angle = offset+i*Math.PI/12;
     const point = {x:player.x+Math.cos(angle)*radius, y:player.y+Math.sin(angle)*radius};
-    if (macrophageClearance(point) < MACROPHAGE.radius+45) continue;
     const enemy = makeMacrophage(point.x, point.y, angle+Math.PI);
+    if (!isMacrophageOutsideView(enemy) || macrophageClearance(point) < MACROPHAGE.radius+45) continue;
     enemy.turn = macrophageSerial%2 ? 1 : -1;
     macrophages.push(enemy);
     return true;
   }
   return false;
+}
+
+function macrophageScreenBounds(enemy) {
+  // Include the entire shared image canvas, even its transparent margins and
+  // the larger extents reached after rotation. Never test just the centre.
+  let width=0,height=0;
+  for(const key of ['macrofago_idle','macrofago_reach','macrofago_closed']) {
+    const shape=collisionShape(key),image=img[key];
+    width=Math.max(width,shape?.width||0,image?.width||0);
+    height=Math.max(height,shape?.height||0,image?.height||0);
+  }
+  const c=Math.abs(Math.cos(enemy.rotation)),s=Math.abs(Math.sin(enemy.rotation));
+  const zoom=camera.zoom||1,center=worldToScreen(enemy.x,enemy.y);
+  const halfWidth=(c*width+s*height)*enemy.scale*zoom/2;
+  const halfHeight=(s*width+c*height)*enemy.scale*zoom/2;
+  return {left:center.x-halfWidth,right:center.x+halfWidth,top:center.y-halfHeight,bottom:center.y+halfHeight};
+}
+
+function isMacrophageOutsideView(enemy) {
+  const bounds=macrophageScreenBounds(enemy),padding=MACROPHAGE.spawnPadding;
+  return bounds.right<=-padding || bounds.left>=W+padding || bounds.bottom<=-padding || bounds.top>=H+padding;
+}
+
+function macrophageEdgeWarning() {
+  if(gameMode!==GameMode.HARD || state!==State.SEARCH || macrophageGrace>0) return null;
+  let nearest=null;
+  for(const enemy of macrophages) {
+    const surface=spriteSurface(enemy,player);
+    if(!surface) continue;
+    const distance=Math.max(0,surface.distance);
+    if(distance>=MACROPHAGE.warningFar || (nearest && distance>=nearest.distance)) continue;
+    nearest={enemy,distance};
+  }
+  if(!nearest) return null;
+  const dx=nearest.enemy.x-player.x,dy=nearest.enemy.y-player.y;
+  if(Math.hypot(dx,dy)<1e-6) return null;
+  const origin=worldToScreen(player.x,player.y);
+  origin.x=clamp(origin.x,1,W-1);origin.y=clamp(origin.y,1,H-1);
+  const tx=dx>0?(W-origin.x)/dx:dx<0?-origin.x/dx:Infinity;
+  const ty=dy>0?(H-origin.y)/dy:dy<0?-origin.y/dy:Infinity;
+  const travel=Math.min(tx,ty);
+  return {x:clamp(origin.x+dx*travel,0,W),y:clamp(origin.y+dy*travel,0,H),vertical:tx<=ty,
+    strength:1-smoothstep(MACROPHAGE.warningNear,MACROPHAGE.warningFar,nearest.distance)};
+}
+
+function drawMacrophageEdgeWarning() {
+  const warning=macrophageEdgeWarning();
+  if(!warning) return;
+  const depth=120,spread=Math.min(W,H)*.48;
+  ctx.save();ctx.translate(warning.x,warning.y);
+  ctx.scale(warning.vertical?depth:spread,warning.vertical?spread:depth);
+  const glow=ctx.createRadialGradient(0,0,0,0,0,1);
+  glow.addColorStop(0,'rgba(255,45,55,.72)');
+  glow.addColorStop(.35,'rgba(245,25,40,.38)');
+  glow.addColorStop(1,'rgba(230,15,30,0)');
+  ctx.globalAlpha=warning.strength*(.9+.1*Math.sin(worldTime*3));
+  ctx.fillStyle=glow;ctx.fillRect(-1,-1,2,2);ctx.restore();
 }
 
 function macrophageMouth(enemy) {
@@ -94,7 +151,7 @@ function macrophageMouth(enemy) {
 
 function changeMacrophageMode(enemy, mode) {
   enemy.mode = mode; enemy.elapsed = 0; enemy.capture = 0;
-  enemy.sprite = ['windup','close'].includes(mode) ? 'macrofago_reach' : 'macrofago_idle';
+  enemy.sprite = macrophagePose(enemy).body;
 }
 
 function moveMacrophage(enemy, targetAngle, speed, dt) {
@@ -185,7 +242,7 @@ function updateMacrophages(dt) {
     } else if (enemy.mode==='close') {
       const mouth=macrophageMouth(enemy);
       enemy.capture=Math.hypot(player.x-mouth.x,player.y-mouth.y)<MACROPHAGE.captureRadius?enemy.capture+dt:0;
-      if(enemy.capture>=MACROPHAGE.captureSeconds) {captureByMacrophage(enemy);return;}
+      if(macrophagePose(enemy).captureReady && enemy.capture>=MACROPHAGE.captureSeconds) {captureByMacrophage(enemy);return;}
       if(enemy.elapsed>=MACROPHAGE.closeSeconds) changeMacrophageMode(enemy,'recover');
     } else if (enemy.mode==='recover') {
       if(enemy.elapsed>=MACROPHAGE.recoverySeconds) {changeMacrophageMode(enemy,'chase');enemy.lost=0;}
@@ -194,7 +251,11 @@ function updateMacrophages(dt) {
       if(homeDistance<90) {changeMacrophageMode(enemy,'patrol');enemy.lost=0;}
       else moveMacrophage(enemy,Math.atan2(enemy.home.y-enemy.y,enemy.home.x-enemy.x),MACROPHAGE.patrolSpeed*1.4,dt);
     }
-    resolveMacrophageContact(enemy);
+    enemy.sprite=macrophagePose(enemy).body;
+    // The cup sensor owns containment while closing. The solid closed membrane
+    // must not push its occupant out before the sustained-capture check finishes.
+    const mouth=macrophageMouth(enemy);
+    if(enemy.mode!=='close' || Math.hypot(player.x-mouth.x,player.y-mouth.y)>=MACROPHAGE.captureRadius) resolveMacrophageContact(enemy);
   }
 }
 
@@ -214,13 +275,33 @@ function macrophageFrames(enemy) {
   return ['macrofago_idle','macrofago_reach',.1+.08*Math.sin(enemy.age*2.5)];
 }
 
+function macrophagePose(enemy) {
+  const [from,to,mix]=macrophageFrames(enemy);
+  return {from,to,mix,body:mix<.5?from:to,captureReady:enemy.mode==='close' && mix>=.85};
+}
+
+let debugMacrophageCollision = false;
+function drawMacrophageCollision(enemy) {
+  const shape=collisionShape(enemy.sprite),mouth=macrophageMouth(enemy);
+  ctx.save();ctx.fillStyle='#63ffb3';ctx.lineWidth=2;
+  for(const [x,y] of shape.points) {
+    const p=localToWorld(enemy.x,enemy.y,enemy.rotation,x*enemy.scale,y*enemy.scale);
+    ctx.beginPath();ctx.arc(p.x,p.y,3,0,Math.PI*2);ctx.fill();
+  }
+  ctx.strokeStyle='#ff7863';ctx.beginPath();
+  ctx.arc(mouth.x,mouth.y,MACROPHAGE.captureRadius,0,Math.PI*2);ctx.stroke();
+  ctx.strokeStyle='#8edaff';
+  for(const probe of getPlayerCollisionProbes()) {ctx.beginPath();ctx.arc(probe.x,probe.y,probe.r,0,Math.PI*2);ctx.stroke();}
+  ctx.restore();
+}
+
 function drawMacrophages() {
   if(gameMode!==GameMode.HARD) return;
   for(const enemy of macrophages) {
     if(!isVisibleWorld(enemy.x,enemy.y,600)) continue;
-    const [from,to,mix]=macrophageFrames(enemy);
+    const {from,to,mix,body}=macrophagePose(enemy);
     if(state===State.SEARCH && macrophageGrace===0 && isNearWorldElement(enemy)) {
-      drawSilhouetteGlow(enemy.sprite,enemy.x,enemy.y,enemy.scale,enemy.rotation);
+      drawSilhouetteGlow(body,enemy.x,enemy.y,enemy.scale,enemy.rotation);
     }
     // One reusable raster, with additive premultiplied alpha, makes the old cup
     // disappear correctly without dimming shared body pixels or retaining ghost lobes.
@@ -232,6 +313,7 @@ function drawMacrophages() {
     blend.globalCompositeOperation='lighter';blend.globalAlpha=mix;
     blend.drawImage(img[to],0,0,512,512);blend.restore();
     drawImageCenter(macrophageBlendLayer,enemy.x,enemy.y,enemy.scale*img[from].width/512,enemy.rotation);
+    if(debugMacrophageCollision) drawMacrophageCollision(enemy);
     if(state===State.SEARCH && enemy.mode==='windup') {
       const mouth=macrophageMouth(enemy);
       ctx.save();ctx.strokeStyle='#ffbe79';ctx.lineWidth=4;

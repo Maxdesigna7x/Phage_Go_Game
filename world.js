@@ -61,12 +61,12 @@ function worldSlotKind(gx,gy,salt=0) {
   return slot===0?'healthy':slot===1?'broken':'cell';
 }
 function cellSprite(type,seed) {return `cell_${type}_0${1+(seed%3)}`;}
-function makeWorldCell(type,x,y,seed) {
+function makeWorldCell(type,x,y,seed,id=null) {
   const info=WORLD_CELL_TYPES[type],sprite=cellSprite(type,seed),shape=collisionShape(sprite);
   const bounds=shape.bounds;
   const diameter=info.diameter*(.93+seeded(seed+3)*.14);
   const scale=Math.min(diameter/Math.max(bounds[2]-bounds[0],bounds[3]-bounds[1]),460/shape.radius);
-  return {kind:'cell',type,sprite,x,y,seed,diameter,scale,rotation:(seeded(seed+5)-.5)*1.2,
+  return {kind:'cell',type,sprite,x,y,seed,id,diameter,scale,rotation:(seeded(seed+5)-.5)*1.2,
     movable:Boolean(info.movable),vx:0,vy:0,spin:0,infoCooldown:0,infectable:false};
 }
 function cellEncounterText(cell) {

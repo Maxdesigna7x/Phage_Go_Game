@@ -8,17 +8,23 @@ python3 -m http.server 8873
 
 Abre http://localhost:8873. Para probar en tablet o móvil en la misma red, usa la dirección local del ordenador.
 
-El tablero ocupa toda la pantalla horizontal, tanto en tablet 4:3 como en móvil panorámico, sin fijarlo a 16:9 ni añadir bandas. En vertical se pausa y aparece un aviso para girar la pantalla. En móviles que admiten la API de pantalla completa, se solicita entrar en ella para jugar; ⛶ permite activarla. El botón **Menú** está disponible durante toda la partida.
+El tablero ocupa toda la pantalla horizontal, tanto en tablet 4:3 como en móvil panorámico, sin fijarlo a 16:9 ni añadir bandas. En vertical se pausa y aparece un aviso para girar la pantalla. En móviles se ofrece pantalla completa; también puedes continuar en horizontal si prefieres o si el navegador la rechaza. Los controles respetan los márgenes seguros del dispositivo. El botón **Menú** está disponible durante la partida.
 
 ## Controles
 
-Toca cualquier zona libre y desliza: el punto inicial es el origen y el desplazamiento determina dirección e intensidad. No hay joystick visible. Al soltar, el fago conserva su inercia. Puedes usar **Infectar** con otro dedo.
+Toca cualquier zona libre y desliza: el punto inicial es el origen y el desplazamiento determina dirección e intensidad. No hay joystick visible. Al soltar, el fago conserva su inercia. Puedes usar **Adherirse** con otro dedo.
 
-Basta acercarse a una bacteria compatible y pulsar **Infectar**. El fago se coloca automáticamente; sus fibras permanecen quietas durante la adhesión y la inyección. Mantén **Inyectar** para transferir el ADN.
+Basta acercarse a una bacteria compatible y pulsar **Adherirse**. El fago se coloca automáticamente; sus fibras permanecen quietas durante la adhesión y la inyección. Mantén pulsado para **inyectar ADN**.
 
 En ordenador: flechas o WASD y Espacio. La tarjeta «Mover» alterna movimiento simple y rotación con propulsión.
 
+Con teclado, Tab recorre los controles y Enter o Espacio activa el control enfocado. En ADN, selecciona una copia; en nucleótidos, selecciona primero la letra y luego su destino. Para ensamblar, selecciona la pieza y después la pieza de destino. El foco se marca en amarillo. Mantener Enter o Espacio sobre el control de inyección transfiere ADN; en lisis, pulsa varias veces. Escape vuelve al menú.
+
+Los modos se habilitan cuando termina la carga. Un recurso esencial que falle muestra **Reintentar**; las decoraciones y fuentes tienen alternativas para permitir jugar.
+
 ## Ciclo y continuidad
+
+Cada partida genera una semilla aleatoria nueva para el mundo y el fondo. La semilla se mantiene al explorar, volver a una zona y completar ciclos de infección.
 
 - Duplica el ADN y coloca cada nucleótido sobre su misma letra: A sobre A, T sobre T, C sobre C y G sobre G.
 - La maquinaria bacteriana fabrica las piezas. Guarda el ADN en la cabeza y ensambla cabeza, cola y fibras.
@@ -26,7 +32,7 @@ En ordenador: flechas o WASD y Espacio. La tarjeta «Mover» alterna movimiento 
 - La bacteria se acerca y gira suavemente al entrar. La inyección y los minijuegos comparten el mismo asset interior, escala y centro.
 - Tras la lisis salen 18 fagos. La cámara sigue al más rápido y se aleja gradualmente hasta devolverte el control de ese mismo fago, sin cambiar su posición. Ambos modos continúan explorando después de cada ciclo.
 
-No hay cuenta atrás por infección. Difícil conserva el reto global de diez minutos. Girar a vertical o salir de la pestaña pausa ese reloj.
+No hay cuenta atrás por infección. Difícil conserva el reto global de diez minutos de simulación activa. La física avanza en pasos de 1/60 s a cualquier frecuencia de render. Cada frame recupera como máximo 250 ms de un bloqueo largo; el exceso tampoco consume el cronómetro ni el bonus de lisis. Girar a vertical, salir de la pestaña o abrir el panel de sonido pausa el mundo, incluidas las burbujas explotadas. Al volver no se recupera el tiempo de pausa.
 
 Las ayudas de ADN y ensamblaje usan un glow pulsante siguiendo la silueta del sprite. En ensamblaje se ilumina solo la pieza que se mueve; al agarrarla, la ayuda cambia a su destino. Los fagos construidos nadan por el interior y se separan entre sí.
 
@@ -41,10 +47,14 @@ Un grupo fijo de seis escenas ambientales muestra fagos nadando, infectando bact
 ## Verificación
 
 ```bash
-node --test tests/game.test.cjs
+node --test tests/game.test.cjs tests/sound.test.cjs
+python3 -m pip install -r requirements-dev.txt
+python3 scripts/check_assets.py
 ```
 
 Las pruebas cubren acople, control multitáctil, lisis, ADN y empaquetado, continuidad de cámara y posición, escenas ambientales, pausa, adaptación a distintas proporciones de pantalla, menú y pantalla completa. La respuesta táctil y el rendimiento final deben comprobarse también en dispositivos reales.
+
+Con un servidor en el puerto 8765 y Playwright disponible, `node tests/browser-enemies.cjs` y `node tests/browser-audit.cjs` prueban render, captura, empujes, un ciclo completo por teclado, dos toques simultáneos y fallos de carga. `PHAGE_CHROME_PATH=/ruta/a/chrome` permite usar un Chrome ya instalado. La CI verifica lógica, recursos y regeneración idéntica de `world-shapes.js`. El detalle de cada decisión de la auditoría está en [docs/REVISION-AUDITORIA-2026-10-20.md](docs/REVISION-AUDITORIA-2026-10-20.md).
 
 ## Publicación
 
@@ -71,6 +81,8 @@ La distribución visible puede variar con la cámara y el ciclo de infección. L
 ## Macrófago en modo difícil
 
 Solo el modo difícil incorpora un macrófago cercano. Patrulla, detecta al fago, lo persigue y abandona el objetivo si se aleja. Antes de cerrar sus prolongaciones muestra una zona de captura durante 1,15 s. Un roce desplaza al fago; la captura requiere permanecer en la copa durante el cierre. La inyección, los minijuegos y el escape suspenden la amenaza, con tres segundos de protección al volver al vuelo.
+
+El macrófago aparece completamente fuera de cámara: se comprueba el lienzo entero de sus imágenes, con rotación, escala, zoom y margen adicional. Si no hay un lugar exterior libre, la aparición se pospone. Al acercarte, un glow rojo en el borde señala su dirección y se intensifica con la proximidad a su membrana. Se oculta durante la protección y las fases interiores.
 
 El macrófago empuja plaquetas, otras células y bacterias al desplazarse, con masas, freno y transferencia de empujes. La bacteria objetivo está protegida. Los cuerpos conservan su posición mientras permanecen en la vecindad activa. La captura muestra Game Over y permite volver al menú con un toque/clic o automáticamente tras seis segundos.
 

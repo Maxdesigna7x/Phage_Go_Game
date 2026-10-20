@@ -97,3 +97,43 @@ test('all bubble pops use the same imported recording and retain their preferenc
   }
   assert.ok(fs.existsSync(path.join(root,'audio/sonidos/fuentes/el_boss_669918_bubble_pop.mp3')));
 });
+
+test('late transient requests expire and pending equivalents merge into the newest event', async()=>{
+  const {sound,sandbox,sources}=engine();await sound.ready;
+  let time=0;sandbox.performance.now=()=>time;
+  let finish;let pending=new Promise(resolve=>finish=resolve);sound.buffer=()=>pending;
+  const calls=[];
+  for(let i=0;i<8;i++){time=i*100;calls.push(sound.play('ui_pulsar'));}
+  assert.equal(sound.pending.size,1);
+  time=10000;finish({duration:1});await Promise.all(calls);
+  assert.equal(sources.length,0);assert.equal(sound.pending.size,0);
+  pending=new Promise(resolve=>finish=resolve);
+  time=11000;const first=sound.play('ui_pulsar');
+  time=11100;const second=sound.play('ui_pulsar');
+  time=11120;finish({duration:1});await Promise.all([first,second]);
+  assert.equal(sources.length,1);
+});
+
+test('milestone effects have a bounded longer window and disabling cancels pending playback', async()=>{
+  const {sound,sandbox,sources}=engine();await sound.ready;
+  let time=0;sandbox.performance.now=()=>time;
+  let finish;let pending=new Promise(resolve=>finish=resolve);sound.buffer=()=>pending;
+  const milestone=sound.play('ciclo_completo');await Promise.resolve();
+  time=1000;finish({duration:1});await milestone;assert.equal(sources.length,1);
+  time=2000;pending=new Promise(resolve=>finish=resolve);
+  const disabled=sound.play('ui_pulsar');await Promise.resolve();
+  sound.apply({disabled:['ui_pulsar']});sound.apply({disabled:[]});
+  finish({duration:1});await disabled;assert.equal(sources.length,1);
+  time=3000;pending=new Promise(resolve=>finish=resolve);
+  const expired=sound.play('ciclo_completo');await Promise.resolve();
+  time=5000;finish({duration:1});await expired;assert.equal(sources.length,1);
+});
+
+test('stopping groups and returning to menu cancels pending one-shots as well as loops', async()=>{
+  const {sound,sources}=engine();await sound.ready;
+  let finish;const pending=new Promise(resolve=>finish=resolve);sound.buffer=()=>pending;
+  const requests=[sound.play('ui_pulsar'),sound.play('adn_inyectar',{loop:true})];
+  await Promise.resolve();sound.stop('ui_pulsar');sound.stopAll();
+  finish({duration:1});await Promise.all(requests);
+  assert.equal(sources.length,0);assert.equal(sound.pending.size,0);assert.equal(sound.loops.size,0);
+});

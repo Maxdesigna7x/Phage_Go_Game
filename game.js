@@ -13,6 +13,16 @@ const menuButton = document.getElementById("menuButton");
 const fullscreenButton = document.getElementById("fullscreenButton");
 const rotateNotice = document.getElementById("rotateNotice");
 const displayNotice = document.getElementById("displayNotice");
+const retryLoadingButton = document.getElementById("retryLoadingButton");
+const loadingStatus = document.getElementById("loadingStatus");
+const BUILD_VERSION = "20261020-30";
+const SIMULATION_STEP = 1 / 60;
+const MAX_FRAME_SECONDS = 0.25; // Discard long stalls equally for gameplay and its clocks.
+let simulationAccumulator = 0;
+let gameReady = false;
+let loadingInProgress = false;
+let loopStarted = false;
+let fullscreenDeclined = false;
 
 let W = 1600;
 const H = 900;
@@ -98,7 +108,6 @@ const ASSETS = {
   hardIcon: "assets_webp/phage_hard.webp",
   start: "assets_webp/Start.webp",
   arrow: "assets_webp/Arrow.webp",
-  phage: "assets_webp/Phage.webp",
   phageSprite: "assets_webp/Phage_Sprite.webp",
   bacteriaInside: "assets_webp/new_size/Bacteria_Inside.webp",
   bacteriaOutside1: "assets_webp/new_size/Bacteria_Outside_1.webp",
@@ -128,7 +137,6 @@ const ASSETS = {
   bg6: "assets_webp/Bacteria_Background_6.webp",
   bg7: "assets_webp/Bacteria_Background_7.webp",
   bg8: "assets_webp/Bacteria_Background_8.webp",
-  bubble: "assets_webp/bubble.webp",
   flare: "assets_webp/flare.webp",
   noise: "assets_webp/noise.webp",
   stage0: "assets_webp/Stage_0.webp",
@@ -150,7 +158,7 @@ const NUCLEOTIDE_SEQUENCES = [
 for (const key of WORLD_SPRITES) ASSETS[key] = `assets_webp/celulas/${key.slice(5)}.webp`;
 const img = {};
 const keys = new Set();
-const mouse = { x: 0, y: 0, down: false, justDown: false, justUp: false };
+const mouse = { x: 0, y: 0, down: false, justDown: false, justUp: false, pointerId: null };
 const uiButtons = [];
 const touchControls = {
   joystick: { active: false, pointerId: null, cx: 0, cy: 0, dx: 0, dy: 0, radius: 76 },
@@ -191,12 +199,13 @@ let assembly;
 let lysis;
 let particles = [];
 let currentProcCell = { x: null, y: null };
+let worldSeed = 0;
 let gameMode = GameMode.NORMAL;
 let score = 0;
 let kills = 0;
-let hardModeStartedAt = 0;
+let hardModeElapsed = 0;
 let lysisStartedAt = 0;
-let infectedBacteriaSeeds = new Set();
+let infectedBacteriaIds = new Set();
 let toastMessage = "";
 let toastTimer = 0;
 let mobileControls = false;
@@ -207,13 +216,13 @@ const glowSprites = {};
 const poppedBubbles = new Map();
 
 const stageInfo = {
-  [State.SEARCH]: ["Adsorcion", 1, "Rota y propulsa el fago. Acopla las patas a una bacteria."],
-  [State.ADSORPTION]: ["Adsorcion", 1, "Fago adherido. Pulsa ESPACIO para iniciar la inyeccion."],
-  [State.INJECTION]: ["Inyeccion", 2, "Manten ESPACIO para inyectar el ADN."],
-  [State.DNA_REPLICATION]: ["Replicacion", 3, "Haz click en el ADN para duplicarlo o procesarlo."],
-  [State.NUCLEOTIDE_MINIGAME]: ["Nucleotidos", 4, "Arrastra cada nucleotido al slot con su misma letra."],
+  [State.SEARCH]: ["Adsorción", 1, "Rota y propulsa el fago. Acopla las patas a una bacteria."],
+  [State.ADSORPTION]: ["Adsorción", 1, "Fago adherido. Pulsa ESPACIO para iniciar la inyección."],
+  [State.INJECTION]: ["Inyección", 2, "Mantén ESPACIO para inyectar el ADN."],
+  [State.DNA_REPLICATION]: ["Replicación", 3, "Selecciona el ADN para duplicarlo o procesarlo."],
+  [State.NUCLEOTIDE_MINIGAME]: ["Nucleótidos", 4, "Selecciona un nucleótido y su destino, o arrástralo a su misma letra."],
   [State.BIOSYNTHESIS]: ["Fabricación", 4, "La bacteria fabrica las piezas del fago."],
-  [State.PART_ASSEMBLY]: ["Ensamblaje", 5, "Junta cabeza, cuerpo y patas para formar un fago."],
+  [State.PART_ASSEMBLY]: ["Ensamblaje", 5, "Selecciona una pieza y su destino, o arrastra para unirlas."],
   [State.LYSIS]: ["Lisis", 6, "Toca la pantalla o pulsa ESPACIO para liberar los fagos."],
   [State.ESCAPE]: ["Nuevos fagos", 6, "¡Libre! Sigue explorando con uno de los fagos que creaste."],
 };
@@ -221,22 +230,71 @@ const stageInfo = {
 canvas.width = W;
 canvas.height = H;
 
-function loadImages() {
-  return Promise.all(Object.entries(ASSETS).map(([key, src]) => new Promise((resolve, reject) => {
+const OPTIONAL_ASSETS = new Set(['introBack', 'title', 'easyIcon', 'hardIcon', 'flare', 'noise', ...Array.from({length:8}, (_,i)=>`bg${i+1}`)]);
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
     const image = new Image();
-    image.onload = () => {
-      img[key] = image;
-      resolve();
+    const finish = (error) => {
+      clearTimeout(timeout);
+      image.onload = image.onerror = null;
+      error ? reject(error) : resolve(image);
     };
-    image.onerror = () => reject(new Error(`No se pudo cargar ${src}`));
-    image.src = src;
-  })));
+    const timeout = setTimeout(() => finish(new Error(`Tiempo de espera agotado: ${src}`)), 10000);
+    image.onload = () => finish();
+    image.onerror = () => finish(new Error(`No se pudo cargar ${src}`));
+    image.src = `${src}?v=${BUILD_VERSION}`;
+  });
+}
+
+async function loadImages() {
+  let completed = 0;
+  const entries = Object.entries(ASSETS);
+  const results = await Promise.allSettled(entries.map(async ([key, src]) => {
+    if (!img[key] || img[key].fallback) {
+      let error;
+      for (let attempt=0; attempt<2; attempt++) {
+        try { img[key] = await loadImage(src); error = null; break; }
+        catch (failure) { error = failure; }
+      }
+      if (error) {
+        if (!OPTIONAL_ASSETS.has(key)) throw error;
+        img[key] = createLayer(2, 2);
+        img[key].fallback = true;
+      }
+    }
+    loadingStatus.textContent = `Cargando imágenes… ${++completed}/${entries.length}`;
+  }));
+  const failed = results.find(result => result.status === 'rejected');
+  if (failed) throw failed.reason;
+}
+
+async function bootstrapGame() {
+  if (loadingInProgress || gameReady) return;
+  loadingInProgress = true;
+  normalButton.disabled = hardButton.disabled = true;
+  retryLoadingButton.classList.add('hidden');
+  loadingStatus.textContent = 'Cargando imágenes…';
+  try {
+    // Fonts are decorative; an unavailable font must not hold up the game.
+    const fonts = document.fonts ? Promise.allSettled([
+      document.fonts.load('400 32px "Lilita One"'), document.fonts.load('800 24px Nunito'),
+    ]) : Promise.resolve();
+    await Promise.all([loadImages(), Promise.race([fonts, new Promise(resolve=>setTimeout(resolve,1500))])]);
+    init();
+    loading.classList.add('hidden');
+    normalButton.disabled = hardButton.disabled = false;
+    if (!loopStarted) { loopStarted = true; lastTime = performance.now(); requestAnimationFrame(loop); }
+  } catch (error) {
+    loadingStatus.textContent = `${error.message}. Comprueba la conexión y vuelve a intentarlo.`;
+    retryLoadingButton.classList.remove('hidden');
+  } finally { loadingInProgress = false; }
 }
 
 function init() {
   rebuildRenderCaches();
   initAmbientLife();
   resetGame();
+  gameReady = true;
 }
 
 function resetGame() {
@@ -244,18 +302,14 @@ function resetGame() {
   soundEffects.stopAll();
   if (state !== State.INTRO) playSound("volver_menu");
   playfield.classList.remove("playing");
-  state = State.INTRO;
-  stateTime = 0;
+  setState(State.INTRO);
   gameMode = GameMode.NORMAL;
   score = 0;
   kills = 0;
-  hardModeStartedAt = 0;
-  infectedBacteriaSeeds = new Set();
+  hardModeElapsed = 0;
+  infectedBacteriaIds = new Set();
   poppedBubbles.clear();
-  resetTouchControls();
-  keys.clear();
-  pendingActionTaps = 0;
-  spaceWasDown = false;
+  clearHeldInputs();
   resetCycleState(330, 470, 0.65);
   menuButtons.classList.remove("hidden");
   menuButton.classList.add("hidden");
@@ -309,19 +363,24 @@ function resetCycleState(x = player?.x || 330, y = player?.y || 470, rotation = 
 }
 
 function startGame(mode) {
-  if (isDisplayBlocked()) return;
+  if (!gameReady || isDisplayBlocked()) return;
+  const nextSeed = Math.floor(Math.random() * 0x100000000) >>> 0;
+  worldSeed = nextSeed === worldSeed ? (nextSeed + 1) >>> 0 : nextSeed;
+  clearHeldInputs();
   playfield.classList.add("playing");
   gameMode = mode;
   resetMacrophages();
   playSound("partida_iniciar");
   score = 0;
   kills = 0;
-  infectedBacteriaSeeds = new Set();
+  infectedBacteriaIds = new Set();
   cellField = [];
-  hardModeStartedAt = mode === GameMode.HARD ? performance.now() : 0;
+  hardModeElapsed = 0;
   poppedBubbles.clear();
   resetCycleState(50, 50, 0.65);
   camera.x=player.x-W/2; camera.y=player.y-H/2;
+  backgroundFields.length = 0;
+  initAmbientLife();
   updateProceduralBacteriaIfNeeded(true);
   bubbleStats = { total: 0, combo: 0, cooldown: 0, energy: 0, popAge: 1 };
   menuButtons.classList.add("hidden");
@@ -330,8 +389,8 @@ function startGame(mode) {
   setState(State.SEARCH);
 }
 
-function makeBacteria(x, y, scale, rotation, variant, health = "healthy", seed = 0) {
-  const infected = infectedBacteriaSeeds.has(seed);
+function makeBacteria(x, y, scale, rotation, variant, health = "healthy", seed = 0, id = null) {
+  const infected = id !== null && infectedBacteriaIds.has(id);
   const finalHealth = infected || !isHealthyBacteriaVariant(variant) ? "broken" : health;
   return {
     x,
@@ -343,6 +402,7 @@ function makeBacteria(x, y, scale, rotation, variant, health = "healthy", seed =
     healthy: finalHealth === "healthy" && isHealthyBacteriaVariant(variant),
     infectable: finalHealth === "healthy" && isHealthyBacteriaVariant(variant) && !infected,
     seed,
+    id,
     rx: 390 * scale,
     ry: 175 * scale,
   };
@@ -426,10 +486,14 @@ function updateProceduralBacteriaIfNeeded(force = false) {
   const cx = Math.floor(player.x / BACTERIA_CELL), cy = Math.floor(player.y / BACTERIA_CELL);
   if (!force && currentProcCell.x === cx && currentProcCell.y === cy) return;
   currentProcCell = { x: cx, y: cy };
-  const previousCells = new Map(cellField.map(c=>[c.seed,c]));
-  const previousBacteria = new Map(bacteriaField.map(b=>[b.seed,b]));
-  const generated=[], cells=[];
+  // Retain by actual position, with one-cell hysteresis. IDs reserve displaced
+  // bodies' origins while nearby, so regeneration cannot create a second copy.
+  const nearby = body => body === targetBacteria || Math.hypot(body.x-player.x,body.y-player.y) <= ACTIVE_RADIUS + BACTERIA_CELL;
+  const cells = cellField.filter(nearby), generated = bacteriaField.filter(nearby);
+  const retainedIds = new Set([...cells,...generated].map(body=>body.id));
   for (let gx=cx-3;gx<=cx+3;gx++) for(let gy=cy-3;gy<=cy+3;gy++) {
+    const id=`${gx}:${gy}`;
+    if(retainedIds.has(id)) continue;
     const seed=hash2(gx,gy);
     const x=(gx+.5)*BACTERIA_CELL+(seeded(seed)-.5)*36;
     const y=(gy+.5)*BACTERIA_CELL+(seeded(seed+11)-.5)*36;
@@ -437,11 +501,11 @@ function updateProceduralBacteriaIfNeeded(force = false) {
     const kind=worldSlotKind(gx,gy);
     if(kind==='cell') {
       const type=FOREGROUND_CELL_TYPES[(seed>>>3)%FOREGROUND_CELL_TYPES.length];
-      const cell=previousCells.get(seed) || makeWorldCell(type,x,y,seed);
+      const cell=makeWorldCell(type,x,y,seed,id);
       cells.push(cell);
     } else {
       const variant=kind==='healthy'?1:2+(seed%5);
-      const cell=previousBacteria.get(seed) || makeBacteria(x,y,.74+seeded(seed+23)*.08,-.45+seeded(seed+41)*.9,variant,kind,seed);
+      const cell=makeBacteria(x,y,.74+seeded(seed+23)*.08,-.45+seeded(seed+41)*.9,variant,kind,seed,id);
       generated.push(cell);
     }
   }
@@ -557,6 +621,8 @@ function updateWorldCells(dt) {
 }
 
 function setState(next) {
+  invalidateUi();
+  cancelGenericPointer();
   if (next === State.INJECTION && targetBacteria) infectionView = { camera: { ...camera }, rotation: targetBacteria.rotation };
   const previous = state;
   state = next;
@@ -569,42 +635,43 @@ function setState(next) {
   if (next === State.SEARCH && previous !== State.SEARCH) protectFromMacrophages();
   if (next !== State.SEARCH) resetJoystick();
   stateTime = 0;
-  dragItem = null;
-  mouse.down = false;
-  mouse.justDown = false;
-  mouse.justUp = false;
   if (next !== State.INTRO) menuButtons.classList.add("hidden");
   menuButton.classList.toggle("hidden", next === State.INTRO);
   if (next !== State.COMPLETE) restartButton.classList.add("hidden");
+  announceGameState();
 }
 
 function loop(time) {
-  const dt = Math.min(0.033, (time - lastTime) / 1000 || 0);
+  let dt = Math.min(MAX_FRAME_SECONDS, Math.max(0, (time - lastTime) / 1000 || 0));
   lastTime = time;
   if (isDisplayBlocked() || document.hidden || soundEffects.menuOpen) {
     if (!soundEffects.menuOpen) soundEffects.stopAll();
     if (pausedAt === null) pausedAt = performance.now();
+    simulationAccumulator = 0;
+    clearHeldInputs();
     requestAnimationFrame(loop);
     return;
   }
   if (pausedAt !== null) {
-    const pauseDuration = performance.now() - pausedAt;
-    if (hardModeStartedAt) hardModeStartedAt += pauseDuration;
-    if (lysisStartedAt) lysisStartedAt += pauseDuration;
-    if (lysis.burstStartedAt) lysis.burstStartedAt += pauseDuration;
+    dt = 0;
+    simulationAccumulator = 0;
     pausedAt = null;
   }
-  stateTime += dt;
-  const actionDown = keys.has(" ") || keys.has("Spacebar") || touchControls.actionDown;
-  const actionTaps = pendingActionTaps;
-  pendingActionTaps = 0;
-  spaceTap = actionTaps > 0 || (actionDown && !spaceWasDown);
-  spaceWasDown = actionDown;
-  update(dt, actionDown, actionTaps);
-  updateSoundEffects(actionDown);
+  simulationAccumulator += dt;
+  while (simulationAccumulator + 1e-9 >= SIMULATION_STEP) {
+    simulationAccumulator = Math.max(0,simulationAccumulator-SIMULATION_STEP);
+    stateTime += SIMULATION_STEP;
+    const actionDown = isActionHeld();
+    const actionTaps = pendingActionTaps;
+    pendingActionTaps = 0;
+    spaceTap = actionTaps > 0 || (actionDown && !spaceWasDown);
+    spaceWasDown = actionDown;
+    update(SIMULATION_STEP, actionDown, actionTaps);
+    updateSoundEffects(actionDown);
+    mouse.justDown = false;
+    mouse.justUp = false;
+  }
   render(dt);
-  mouse.justDown = false;
-  mouse.justUp = false;
   requestAnimationFrame(loop);
 }
 
@@ -642,7 +709,8 @@ function update(dt, spaceDown, actionTaps = spaceTap ? 1 : 0) {
     player.contactSoundTimer = Math.max(0, (player.contactSoundTimer || 0)-dt);
   }
   if (gameMode === GameMode.HARD && state !== State.INTRO && state !== State.COMPLETE) {
-    if (performance.now() - hardModeStartedAt >= HARD_MODE_DURATION_MS) {
+    hardModeElapsed += dt * 1000;
+    if (hardModeElapsed + 1e-6 >= HARD_MODE_DURATION_MS) {
       setState(State.COMPLETE);
       return;
     }
@@ -676,7 +744,7 @@ function updateSearch(dt) {
     player.vx += movement.x * THRUST * boost * dt;
     player.vy += movement.y * THRUST * boost * dt;
     if (Math.hypot(movement.x, movement.y) > 0.05) {
-      player.rotation = lerpAngle(player.rotation, Math.atan2(movement.x, -movement.y), 0.18);
+      player.rotation = lerpAngle(player.rotation, Math.atan2(movement.x, -movement.y), frameAlpha(0.18, dt));
     }
   } else {
     if (movement.left) player.rotation -= TURN_SPEED * dt;
@@ -721,7 +789,7 @@ function updateSearch(dt) {
   }
 
   if (attachCandidate && !previousCandidate) playSound("bacteria_disponible", {volume:0.3});
-  if (attachCandidate && (keys.has(" ") || keys.has("Spacebar") || touchControls.actionDown)) {
+  if (attachCandidate && (isActionHeld() || spaceTap)) {
     clearBubbleEnergy();
     targetBacteria = attachCandidate;
     attachPose = getDockPose(player, targetBacteria);
@@ -737,8 +805,8 @@ function updateSearch(dt) {
 
   const targetCameraX = player.x - W * 0.5;
   const targetCameraY = player.y - H * 0.5;
-  camera.x = lerp(camera.x, targetCameraX, CAMERA_LERP);
-  camera.y = lerp(camera.y, targetCameraY, CAMERA_LERP);
+  camera.x = lerp(camera.x, targetCameraX, frameAlpha(CAMERA_LERP, dt));
+  camera.y = lerp(camera.y, targetCameraY, frameAlpha(CAMERA_LERP, dt));
 }
 
 function updateAdsorption(dt, spaceDown) {
@@ -748,8 +816,8 @@ function updateAdsorption(dt, spaceDown) {
   player.x = lerp(attachPose.start.x, attachPose.x, t);
   player.y = lerp(attachPose.start.y, attachPose.y, t);
   player.rotation = lerpAngle(attachPose.start.rotation, attachPose.rotation, t);
-  camera.x = lerp(camera.x, targetBacteria.x - W * 0.5, 0.08);
-  camera.y = lerp(camera.y, targetBacteria.y - H * 0.52, 0.08);
+  camera.x = lerp(camera.x, targetBacteria.x - W * 0.5, frameAlpha(0.08, dt));
+  camera.y = lerp(camera.y, targetBacteria.y - H * 0.52, frameAlpha(0.08, dt));
   if (previousTimer < DOCK_SECONDS && attachTimer >= DOCK_SECONDS) playSound("infeccion_anclaje");
   if (attachTimer >= DOCK_SECONDS && (spaceDown || spaceTap)) setState(State.INJECTION);
 }
@@ -788,14 +856,18 @@ function updateDnaReplication(dt) {
     dna.x += dna.vx * dt;
     dna.y += dna.vy * dt;
     dna.rotation += dna.spin * dt;
-    dna.vx *= 0.985;
-    dna.vy *= 0.985;
-    keepInsideBacteria(dna);
+    dna.vx *= Math.pow(0.985, dt * 60);
+    dna.vy *= Math.pow(0.985, dt * 60);
+    keepInsideBacteria(dna, 55, dt);
   }
   resolveDnaCollisions();
   if (!mouse.justDown) return;
   const dna = pickDna(mouse.x, mouse.y);
   if (!dna) return;
+  activateDna(dna);
+}
+
+function activateDna(dna) {
   if (replication.dnaPieces.length < TARGET_DNA && !dna.duplicated) {
     spawnDnaCopy(dna);
     dna.duplicated = true;
@@ -803,7 +875,7 @@ function updateDnaReplication(dt) {
     return;
   }
   if (replication.dnaPieces.length < TARGET_DNA) {
-    sayReplication("Elige una copia que aun no se haya duplicado.");
+    sayReplication("Elige una copia que aún no se haya duplicado.");
     return;
   }
   if (dna.processed) {
@@ -949,7 +1021,7 @@ function makeDrag(kind, code, x, y) {
 function updatePartAssembly(dt) {
   handleDrag(assembly.activeParts.filter(p => !assembly.joining.headBody || p.kind !== "head"), item => trySnapParts(item));
   for (const part of assembly.activeParts) {
-    keepInsideBacteria(part, 60);
+    keepInsideBacteria(part, 60, dt);
   }
   if (assembly.activeParts.length === 0) {
     if (assembly.completed >= TARGET_PHAGES) setState(State.LYSIS);
@@ -1020,7 +1092,7 @@ function completePhageFromParts(x, y) {
 }
 
 function updateLysis(dt, taps = spaceTap ? 1 : 0) {
-  if (!lysisStartedAt) lysisStartedAt = performance.now();
+  if (!lysisStartedAt) lysisStartedAt = worldTime * 1000;
   if (taps > 0 && !lysis.burst) {
     const previousPressure=lysis.pressure;
     lysis.pressure = clamp(lysis.pressure + 0.105 * taps, 0, 1);
@@ -1035,7 +1107,7 @@ function updateLysis(dt, taps = spaceTap ? 1 : 0) {
     lysis.burst = true;
     playSound("bacteria_explotar");
     playSound("fagos_liberar", {volume:0.35});
-    lysis.burstStartedAt = performance.now();
+    lysis.burstStartedAt = worldTime * 1000;
     for (let i = 0; i < 18; i++) {
       const angle = i === 0 ? -0.6 : i * Math.PI * 2 / 17;
       const speed = i === 0 ? 570 : rand(180, 350);
@@ -1065,7 +1137,7 @@ function beginEscape() {
   targetBacteria.health = "broken";
   targetBacteria.healthy = false;
   targetBacteria.infectable = false;
-  infectedBacteriaSeeds.add(targetBacteria.seed);
+  if (targetBacteria.id !== null) infectedBacteriaIds.add(targetBacteria.id);
   escape = { elapsed: 0, camera: { ...camera }, hero: lysis.released[0], startScale: 0.18 / zoom };
   setState(State.ESCAPE);
   clearHeldInputs();
@@ -1085,7 +1157,7 @@ function updateEscape(dt) {
 
 function returnToFlightAfterKill() {
   playSound("ciclo_completo", {volume:0.45});
-  const bonus = performance.now() - lysisStartedAt < 8000 ? 25 : 0;
+  const bonus = worldTime * 1000 - lysisStartedAt < 8000 ? 25 : 0;
   score += 100 + bonus;
   kills++;
   const hero = { ...escape.hero }, view = { ...camera }, previousBacteria = bacteriaField;
@@ -1120,6 +1192,9 @@ function handleDrag(items, onDrop) {
       const pickY = joined ? item.y + (160.5 - 280) * ASSEMBLY_PHASE_SCALE : item.y;
       if (hit(mouse, item.x, pickY, radius)) {
         dragItem = item;
+        item.dragOrigin = {x:item.x, y:item.y};
+        item.dragPartners = state===State.PART_ASSEMBLY && assembly.joining.headBody && ['head','body'].includes(item.kind)
+          ? assembly.activeParts.filter(part=>part!==item && ['head','body'].includes(part.kind)).map(part=>({part,x:part.x,y:part.y})) : [];
         item.dragging = true;
         item.grabOffsetX = joined ? item.x - mouse.x : 0;
         item.grabOffsetY = joined ? item.y - mouse.y : 0;
@@ -1153,6 +1228,9 @@ function handleDrag(items, onDrop) {
   if (dragItem && mouse.justUp) {
     const item = dragItem;
     item.dragging = false;
+    delete item.dragOrigin;
+    delete item.dragPartners;
+    dragItem = null;
     onDrop(item);
     if (item.kind === "nucleotide") {
       item.x = item.ox;
@@ -1163,7 +1241,6 @@ function handleDrag(items, onDrop) {
 }
 
 function render(dt) {
-  updateViewportSafeArea();
   beginUiFrame();
   ctx.clearRect(0, 0, W, H);
   drawBackground(dt);
@@ -1181,7 +1258,10 @@ function render(dt) {
   if (state === State.GAME_OVER) drawMacrophageGameOver();
   drawParticles();
   if (state === State.SEARCH && bubbleStats.energy > 0) drawEnergyEffect();
+  drawMacrophageEdgeWarning();
   if (stageInfo[state]) drawHud();
+  registerMinigameControls();
+  syncSemanticControls();
 }
 
 function buildDepthSprites() {
@@ -1435,7 +1515,7 @@ function resolveBubbleCollisions() {
         const x = gx * layer.cell + seeded(seed + 5) * layer.cell;
         const y = gy * layer.cell + seeded(seed + 13) * layer.cell + Math.sin(worldTime * 0.9 + seed) * 10;
         if (Math.hypot(body.x - x, body.y - y) > size * 0.52 + 36) continue;
-        poppedBubbles.set(id, performance.now() + 12000);
+        poppedBubbles.set(id, worldTime + 12);
         registerBubblePop();
         player.collisionTimer = 0.16;
         spawnBubblePop(x, y, size);
@@ -1464,7 +1544,7 @@ function spawnBubblePop(x, y, size) {
 
 function expirePoppedBubbles() {
   if (poppedBubbles.size === 0) return;
-  const now = performance.now();
+  const now = worldTime;
   for (const [id, expiresAt] of poppedBubbles) {
     if (expiresAt <= now) poppedBubbles.delete(id);
   }
@@ -1828,7 +1908,7 @@ function drawComplete() {
   const cardX = safeCenterX() - cardW / 2;
   const cardY = Math.min(safeY(330), safeBottom(cardH, 92));
   drawPanel(cardX, cardY, cardW, cardH, 0.58);
-  drawTextCentered(gameMode === GameMode.HARD ? "Tiempo terminado" : "Infeccion Completada", safeCenterX(), cardY + 90, 48, "#ffdd69", "900");
+  drawTextCentered(gameMode === GameMode.HARD ? "Tiempo terminado" : "Infección completada", safeCenterX(), cardY + 90, 48, "#ffdd69", "900");
   const stars = gameMode === GameMode.HARD ? clamp(kills, 0, 3) : 3;
   const startX = safeCenterX() - (stars - 1) * 120;
   for (let i = 0; i < stars; i += 1) drawImageCenter(img.start, startX + i * 120, cardY + 205, 0.34, 0);
@@ -1836,8 +1916,8 @@ function drawComplete() {
     drawTextCentered(`Puntos: ${score}`, safeCenterX(), cardY + 320, 32, "#fff", "900");
     drawTextCentered(`Bacterias destruidas: ${kills}`, safeCenterX(), cardY + 364, 28, "#d7f5ff", "900");
   } else {
-    drawTextCentered("Has completado el ciclo litico:", safeCenterX(), cardY + 320, 28, "#fff", "800");
-    drawTextCentered("adsorcion, inyeccion, replicacion, nucleotidos, ensamblaje y lisis.", safeCenterX(), cardY + 364, 26, "#d7f5ff", "800");
+    drawTextCentered("Has completado el ciclo lítico:", safeCenterX(), cardY + 320, 28, "#fff", "800");
+    drawTextCentered("adsorción, inyeccion, replicación, nucleótidos, ensamblaje y lisis.", safeCenterX(), cardY + 364, 26, "#d7f5ff", "800");
   }
   restartButton.classList.remove("hidden");
 }
@@ -1845,14 +1925,14 @@ function drawComplete() {
 function drawHud() {
   const [name, stage, objective] = stageInfo[state];
   let instruction = objective;
-  if (state === State.SEARCH) instruction = "Acércate a una bacteria brillante y pulsa para infestar.";
+  if (state === State.SEARCH) instruction = "Acércate a una bacteria sana brillante y pulsa ESPACIO para adherirte.";
   if (state === State.SEARCH && mobileControls) instruction = attachCandidate
-    ? "Pulsa para infestar y posarte en la bacteria."
+    ? "Pulsa Adherirse para posarte en la bacteria."
     : "Toca y desliza para moverte. Busca una bacteria brillante.";
   if (state === State.ADSORPTION && attachTimer < DOCK_SECONDS) instruction = "El fago se está posando sobre la bacteria…";
   if (state === State.PART_ASSEMBLY) instruction = "Guarda el ADN y ensambla las piezas.";
   if (state === State.LYSIS) instruction = "¡Pulsa muchas veces! La barra no retrocede.";
-  const objectiveText = mobileControls ? instruction.replaceAll("ESPACIO", "el boton") : instruction;
+  const objectiveText = mobileControls ? instruction.replaceAll("ESPACIO", "el botón") : instruction;
   const objectiveX = safeX(SAFE_MARGIN);
   const objectiveY = safeY(SAFE_MARGIN);
   if (![State.DNA_REPLICATION, State.NUCLEOTIDE_MINIGAME, State.BIOSYNTHESIS, State.PART_ASSEMBLY].includes(state)) {
@@ -1878,15 +1958,15 @@ function drawHud() {
   }
 
   if (state === State.SEARCH && attachCandidate) {
-    drawActionPrompt("Pulsa para infestar");
+    drawActionPrompt(actionPromptText());
   } else if (state === State.ADSORPTION || state === State.INJECTION) {
-    drawActionPrompt("Mantén pulsado para infestar");
+    drawActionPrompt(actionPromptText());
   }
   if (state === State.SEARCH && !mobileControls) drawDesktopMovementCard();
 }
 
 function drawHardModeHud() {
-  const remaining = Math.max(0, HARD_MODE_DURATION_MS - (performance.now() - hardModeStartedAt));
+  const remaining = Math.max(0, HARD_MODE_DURATION_MS - hardModeElapsed);
   const seconds = Math.ceil(remaining / 1000);
   const minutesText = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
   const x = safeRight(310, SAFE_MARGIN);
@@ -1933,6 +2013,13 @@ function drawProgress(x, y, w, h, value, color) {
   ctx.lineWidth = 2;
   roundedRect(x, y, w, h, 8);
   ctx.stroke();
+}
+
+function actionPromptText() {
+  if (state === State.SEARCH) return 'Adherirse a la bacteria';
+  if (state === State.ADSORPTION && attachTimer < DOCK_SECONDS) return 'Adhiriéndose a la bacteria…';
+  if (state === State.ADSORPTION) return 'Pulsa para iniciar la inyección';
+  return 'Mantén pulsado para inyectar ADN';
 }
 
 function drawActionPrompt(text) {
@@ -2193,7 +2280,7 @@ function pickDna(x, y) {
   return null;
 }
 
-function keepInsideBacteria(obj, radius = 55) {
+function keepInsideBacteria(obj, radius = 55, dt = 1/60) {
   const center = { x: W * 0.5, y: H * 0.52 };
   const dx = obj.x - center.x;
   const dy = obj.y - center.y;
@@ -2201,8 +2288,8 @@ function keepInsideBacteria(obj, radius = 55) {
   const ry = 210 - radius;
   const value = (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry);
   if (value > 1) {
-    obj.x -= dx * 0.025;
-    obj.y -= dy * 0.025;
+    obj.x -= dx * frameAlpha(0.025, dt);
+    obj.y -= dy * frameAlpha(0.025, dt);
     if (obj.vx !== undefined) obj.vx *= -0.25;
     if (obj.vy !== undefined) obj.vy *= -0.25;
   }
@@ -2283,12 +2370,12 @@ function drawEnergyEffect() {
 }
 
 function buildSilhouetteGlows() {
-  for (const key of ["head", "body", "legs", "dnaComplete", "bacteriaOutside1", "phagePhase1", "phagePhase2", ...Array.from({length:5},(_,i)=>`bacteriaOutside${i+2}`), ...WORLD_SPRITES]) {
+  for (const key of ["macrofago_idle", "macrofago_reach", "macrofago_closed", "head", "body", "legs", "dnaComplete", "bacteriaOutside1", "phagePhase1", "phagePhase2", ...Array.from({length:5},(_,i)=>`bacteriaOutside${i+2}`), ...WORLD_SPRITES]) {
     const source = img[key], ratio = Math.min(1, 384 / Math.max(source.width, source.height));
     const mask = createLayer(Math.ceil(source.width * ratio), Math.ceil(source.height * ratio));
     const m = mask.getContext("2d"); m.drawImage(source, 0, 0, mask.width, mask.height);
-    m.globalCompositeOperation = "source-in"; m.fillStyle = key.startsWith('cell_') || /^bacteriaOutside[2-6]$/.test(key) ? '#ff6868' : '#ffe998'; m.fillRect(0, 0, mask.width, mask.height);
-    silhouetteGlows[key] = { mask, sourceWidth: source.width, sourceHeight: source.height, color: key.startsWith("cell_") || /^bacteriaOutside[2-6]$/.test(key) ? "#ff3535" : "#ffd95a", cached: null };
+    m.globalCompositeOperation = "source-in"; m.fillStyle = key.startsWith('macrofago_') || key.startsWith('cell_') || /^bacteriaOutside[2-6]$/.test(key) ? '#ff6868' : '#ffe998'; m.fillRect(0, 0, mask.width, mask.height);
+    silhouetteGlows[key] = { mask, sourceWidth: source.width, sourceHeight: source.height, color: key.startsWith("macrofago_") || key.startsWith("cell_") || /^bacteriaOutside[2-6]$/.test(key) ? "#ff3535" : "#ffd95a", cached: null };
   }
   layers.energyVignette = createLayer(320, 180);
   const c = layers.energyVignette.getContext("2d");
@@ -2497,7 +2584,8 @@ function isVisibleWorld(x, y, margin) {
 }
 
 function hash2(x, y, salt = 0) {
-  let h = x * 374761393 + y * 668265263 + salt * 1442695041;
+  // Stable throughout a run, including revisits and returns from an infection.
+  let h = (x * 374761393 + y * 668265263 + salt * 1442695041) ^ worldSeed;
   h = (h ^ (h >> 13)) * 1274126177;
   return (h ^ (h >> 16)) >>> 0;
 }
@@ -2529,8 +2617,8 @@ function updateParticles(dt) {
     p.life -= dt;
     p.x += p.vx * dt;
     p.y += p.vy * dt;
-    p.vx *= 0.96;
-    p.vy *= 0.96;
+    p.vx *= Math.pow(0.96, dt * 60);
+    p.vy *= Math.pow(0.96, dt * 60);
     return p.life > 0;
   });
 }
@@ -2593,7 +2681,7 @@ function screenToCanvas(ev) {
 function requiresFullscreen() {
   const root = document.documentElement;
   const supported = Boolean(root?.requestFullscreen || root?.webkitRequestFullscreen);
-  return mobileControls && supported && !document.fullscreenElement && !document.webkitFullscreenElement;
+  return mobileControls && supported && !fullscreenDeclined && !document.fullscreenElement && !document.webkitFullscreenElement;
 }
 
 function isDisplayBlocked() {
@@ -2616,7 +2704,8 @@ function resizeCanvasToViewport() {
     if (state === State.LYSIS) for (const p of lysis.released) p.x += shift;
     clearHeldInputs();
   }
-  canvas.width = W; canvas.height = H;
+  if (canvas.width !== W) canvas.width = W;
+  if (canvas.height !== H) canvas.height = H;
   canvas.style.width = `${window.innerWidth}px`; canvas.style.height = `${window.innerHeight}px`;
   playfield.style.width = `${window.innerWidth}px`; playfield.style.height = `${window.innerHeight}px`;
   playfield.style.left = "0px"; playfield.style.top = "0px";
@@ -2635,10 +2724,16 @@ function resizeCanvasToViewport() {
     clearHeldInputs(); if (pausedAt === null) pausedAt = performance.now();
   }
   updateViewportSafeArea();
+  invalidateUi();
 }
 
 function updateViewportSafeArea() {
-  viewportSafe = { left: 0, top: 0, right: W, bottom: H, width: W, height: H, cx: W / 2, cy: H / 2 };
+  const probe = document.getElementById('safeAreaProbe');
+  const style = window.getComputedStyle?.(probe);
+  const sx = W/window.innerWidth, sy = H/window.innerHeight;
+  const left = (parseFloat(style?.paddingLeft)||0)*sx, top = (parseFloat(style?.paddingTop)||0)*sy;
+  const right = W-(parseFloat(style?.paddingRight)||0)*sx, bottom = H-(parseFloat(style?.paddingBottom)||0)*sy;
+  viewportSafe = {left,top,right,bottom,width:right-left,height:bottom-top,cx:(left+right)/2,cy:(top+bottom)/2};
 }
 
 function safeX(offset) {
@@ -2663,15 +2758,19 @@ function safeCenterX() {
 
 function beginUiFrame() {
   uiButtons.length = 0;
+  semanticFrame.length = 0;
 }
 
 function registerUiButton(id, x, y, w, h, onClick) {
-  uiButtons.push({ id, x, y, w, h, onClick });
+  uiButtons.push({ id, x, y, w, h, onClick, state });
+  const label = id === 'action' ? actionPromptText() : id === 'movement-mode' ? `Cambiar movimiento. Modo ${desktopMovementMode===DesktopMovementMode.SIMPLE?'simple':'normal'}` : 'Volver al menú';
+  registerSemanticControl(id, x, y, w, h, label, onClick);
 }
 
 function handleUiPointerDown(p, pointerId) {
   for (let i = uiButtons.length - 1; i >= 0; i -= 1) {
     const button = uiButtons[i];
+    if (button.state !== state) continue;
     if (p.x < button.x || p.x > button.x + button.w || p.y < button.y || p.y > button.y + button.h) continue;
     if (button.id === "action") {
       if (touchControls.actionPointerId !== null) return true;
@@ -2804,24 +2903,41 @@ async function toggleFullscreen() {
       if (document.documentElement.requestFullscreen) await document.documentElement.requestFullscreen();
       else if (document.documentElement.webkitRequestFullscreen) document.documentElement.webkitRequestFullscreen();
       else { showDisplayNotice("Este navegador no ofrece pantalla completa. Puedes jugar en horizontal."); return; }
+      fullscreenDeclined = false;
       try { await screen.orientation?.lock?.("landscape"); } catch { /* Rotate prompt remains the fallback on unsupported devices. */ }
     }
   } catch {
-    showDisplayNotice("No se pudo abrir pantalla completa. Gira el dispositivo para seguir jugando.");
+    fullscreenDeclined = true;
+    showDisplayNotice("No se pudo abrir pantalla completa. Puedes seguir jugando en horizontal o volver a intentarlo.");
   }
   resizeCanvasToViewport();
 }
 
 function clearHeldInputs() {
   keys.clear();
+  semanticActionKey = null;
   resetTouchControls();
   pendingActionTaps = 0;
   spaceWasDown = false;
-  mouse.down = false;
-  mouse.justDown = false;
-  mouse.justUp = false;
-  if (dragItem) { dragItem.dragging = false; dragItem = null; }
+  cancelGenericPointer();
 }
+
+function cancelGenericPointer(pointerId = mouse.pointerId) {
+  if (pointerId !== mouse.pointerId) return;
+  mouse.pointerId = null;
+  mouse.down = mouse.justDown = mouse.justUp = false;
+  if (dragItem) {
+    if (dragItem.dragOrigin) Object.assign(dragItem, dragItem.dragOrigin);
+    for (const origin of dragItem.dragPartners || []) { origin.part.x=origin.x; origin.part.y=origin.y; }
+    delete dragItem.dragOrigin;
+    delete dragItem.dragPartners;
+    dragItem.dragging = false;
+    dragItem = null;
+  }
+}
+
+function frameAlpha(alpha60, dt) { return 1 - Math.pow(1-alpha60, dt*60); }
+function isActionHeld() { return keys.has(' ') || keys.has('Spacebar') || touchControls.actionDown || semanticActionKey !== null; }
 
 function rand(min, max) {
   return min + Math.random() * (max - min);
@@ -2854,7 +2970,7 @@ window.addEventListener("keydown", ev => {
     ev.preventDefault();
     return;
   }
-  if (isDisplayBlocked()) return;
+  if (isDisplayBlocked() || ev.target?.closest?.('button, input, select, textarea, dialog')) return;
   if ((ev.key === " " || ev.key === "Spacebar") && !ev.repeat && !keys.has(key)) pendingActionTaps++;
   keys.add(key);
   if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " "].includes(ev.key)) ev.preventDefault();
@@ -2863,10 +2979,11 @@ window.addEventListener("keydown", ev => {
 window.addEventListener("keyup", ev => {
   const key = ev.key.length === 1 ? ev.key.toLowerCase() : ev.key;
   keys.delete(key);
+  if (ev.key === semanticActionKey) semanticActionKey = null;
 });
 
 canvas.addEventListener("pointerdown", ev => {
-  if (isDisplayBlocked() || soundEffects.menuOpen) return;
+  if (!gameReady || isDisplayBlocked() || soundEffects.menuOpen) return;
   const p = screenToCanvas(ev);
   if (state === State.LYSIS) {
     if (!lysis.burst) pendingActionTaps++;
@@ -2874,11 +2991,14 @@ canvas.addEventListener("pointerdown", ev => {
     ev.preventDefault();
     return;
   }
+  const pointerState = state;
   if (handleUiPointerDown(p, ev.pointerId) || handleMobileControlPointerDown(p, ev.pointerId)) {
-    canvas.setPointerCapture(ev.pointerId);
+    if (state === pointerState) canvas.setPointerCapture(ev.pointerId);
     ev.preventDefault();
     return;
   }
+  if (mouse.pointerId !== null || mouse.justDown || mouse.justUp) return;
+  mouse.pointerId = ev.pointerId;
   mouse.x = p.x;
   mouse.y = p.y;
   mouse.down = true;
@@ -2893,27 +3013,29 @@ canvas.addEventListener("pointermove", ev => {
     ev.preventDefault();
     return;
   }
+  if (mouse.pointerId !== ev.pointerId) return;
   mouse.x = p.x;
   mouse.y = p.y;
 });
 
 canvas.addEventListener("pointerup", ev => {
   if (releaseControlPointer(ev.pointerId)) return;
+  if (mouse.pointerId !== ev.pointerId) return;
   const p = screenToCanvas(ev);
   mouse.x = p.x;
   mouse.y = p.y;
   mouse.down = false;
   mouse.justUp = true;
+  mouse.pointerId = null;
 });
 
 canvas.addEventListener("pointercancel", ev => {
   if (releaseControlPointer(ev.pointerId)) return;
-  mouse.down = false;
-  mouse.justDown = false;
-  mouse.justUp = false;
-  if (dragItem) { dragItem.dragging = false; dragItem = null; }
+  cancelGenericPointer(ev.pointerId);
 });
-canvas.addEventListener("lostpointercapture", ev => releaseControlPointer(ev.pointerId));
+canvas.addEventListener("lostpointercapture", ev => {
+  if (!releaseControlPointer(ev.pointerId)) cancelGenericPointer(ev.pointerId);
+});
 
 window.addEventListener("resize", resizeCanvasToViewport);
 window.addEventListener("blur", clearHeldInputs);
@@ -2930,16 +3052,11 @@ normalButton.addEventListener("click", () => startGame(GameMode.NORMAL));
 hardButton.addEventListener("click", () => startGame(GameMode.HARD));
 restartButton.addEventListener("click", resetGame);
 menuButton.addEventListener("click", resetGame);
+retryLoadingButton.addEventListener('click', bootstrapGame);
+document.getElementById('continueWindowedButton').addEventListener('click', () => {
+  fullscreenDeclined = true;
+  resizeCanvasToViewport();
+});
 
 resizeCanvasToViewport();
-Promise.all([loadImages(), document.fonts ? Promise.all([
-  document.fonts.load('400 32px "Lilita One"'), document.fonts.load('800 24px Nunito'),
-]) : Promise.resolve()])
-  .then(() => {
-    loading.classList.add("hidden");
-    init();
-    requestAnimationFrame(loop);
-  })
-  .catch(error => {
-    loading.textContent = error.message;
-  });
+void bootstrapGame();

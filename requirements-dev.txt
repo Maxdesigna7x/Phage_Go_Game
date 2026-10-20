@@ -1,0 +1,4 @@
+# Development checks and offline asset generation; the game needs no Python packages.
+Pillow==12.2.0
+numpy==1.26.4
+scipy==1.17.1

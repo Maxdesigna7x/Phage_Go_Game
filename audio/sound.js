@@ -5,6 +5,7 @@ class SoundEngine {
     this.disabled = new Set(); this.buffers = new Map(); this.voices = new Set();
     this.loops = new Map(); this.lastPlayed = new Map(); this.menuOpen = false;
     this.context = null; this.epoch = 0; this.groupEpoch = new Map();
+    this.pending = new Map();
     this.ready = this.loadSettings();
   }
   async loadSettings() {
@@ -18,6 +19,7 @@ class SoundEngine {
     const known = new Set(this.catalog.map(s => s.id));
     this.disabled = new Set(Array.isArray(config?.disabled) ? config.disabled.filter(id => known.has(id)) : []);
     for (const v of [...this.voices]) if (this.disabled.has(v.id)) this.stopVoice(v);
+    for (const v of this.pending.values()) if (this.disabled.has(v.id)) this.stopVoice(v);
   }
   unlock() {
     try {
@@ -49,15 +51,21 @@ class SoundEngine {
     }
     return this.buffers.get(sound.id);
   }
-  async play(group, {loop=false, volume=0.65, rate=1, preview=false, offset=0, duration=0, fade=0.02, maxDelay=Infinity} = {}) {
+  async play(group, {loop=false, volume=0.65, rate=1, preview=false, offset=0, duration=0, fade=0.02, maxDelay} = {}) {
     if (!this.context || this.context.state !== 'running' || document.hidden || (this.menuOpen && !preview)) return;
     const choices = this.catalog.filter(s => (s.group===group || s.id===group) && (preview || !this.disabled.has(s.id)));
     if (!choices.length || (loop && this.loops.has(group))) return;
     const now = performance.now();
+    // Loops are cancelled by their owning action. Transient events expire;
+    // milestone effects get a longer, still bounded window.
+    if(maxDelay === undefined) maxDelay=loop?Infinity:preview?2000:/^(partida_|ciclo_completo|bacteria_explotar|fagos_liberar)/.test(group)?1500:250;
     if (!loop && !preview && now-(this.lastPlayed.get(group) ?? -Infinity)<75) return;
     this.lastPlayed.set(group,now);
     const sound = choices[Math.floor(Math.random()*choices.length)];
     const voice = {id:sound.id,group,loop,source:null,cancelled:false};
+    const pendingKey = `${preview?'preview:':''}${group}`;
+    this.stopVoice(this.pending.get(pendingKey));
+    this.pending.set(pendingKey,voice);
     const epoch=this.epoch, groupEpoch=this.groupEpoch.get(group);
     if (loop) this.loops.set(group,voice);
     try {
@@ -83,7 +91,10 @@ class SoundEngine {
       // Auditioning sustained effects is deliberately limited to two seconds.
       if (preview) source.stop(this.context.currentTime+Math.min(2,buffer.duration));
     } catch { /* A missing effect never interrupts gameplay. */ }
-    finally { if (loop && !voice.source && this.loops.get(group)===voice) this.loops.delete(group); }
+    finally {
+      if(this.pending.get(pendingKey)===voice) this.pending.delete(pendingKey);
+      if (loop && !voice.source && this.loops.get(group)===voice) this.loops.delete(group);
+    }
   }
   stopVoice(voice) {
     if (!voice) return;
@@ -98,9 +109,9 @@ class SoundEngine {
   }
   stop(group) {
     this.groupEpoch.set(group,(this.groupEpoch.get(group)||0)+1);
-    for(const voice of [...this.voices,...this.loops.values()]) if(voice.group===group) this.stopVoice(voice);
+    for(const voice of [...this.voices,...this.loops.values(),...this.pending.values()]) if(voice.group===group) this.stopVoice(voice);
   }
-  stopAll() { this.epoch++; for(const v of [...this.voices,...this.loops.values()]) this.stopVoice(v); }
+  stopAll() { this.epoch++; for(const v of [...this.voices,...this.loops.values(),...this.pending.values()]) this.stopVoice(v); this.pending.clear(); }
   config() { return {version:1,disabled:[...this.disabled].sort()}; }
   save() {
     const config=this.config();
@@ -142,6 +153,7 @@ function renderSoundSettings() {
 document.getElementById('soundButton')?.addEventListener('click',async()=>{
   SFX.unlock(); SFX.stopAll(); SFX.menuOpen=true;
   if(typeof clearHeldInputs==='function') clearHeldInputs();
+  if(typeof pausedAt!=='undefined' && pausedAt===null) pausedAt=performance.now();
   await SFX.ready; renderSoundSettings(); soundStatus.textContent=''; soundPanel.showModal();
 });
 soundPanel.addEventListener('close',()=>{SFX.stopAll();SFX.menuOpen=false;});

@@ -9,13 +9,16 @@ function game(effects) {
   const gradient = { addColorStop() {} };
   const context = new Proxy({}, { get: (o, k) => o[k] ?? (k.startsWith('create') ? () => gradient : k === 'getTransform' ? () => ({a:1,b:0,c:0,d:1,e:0,f:0}) : k === 'measureText' ? text => ({ width: text.length * 12 }) : () => {}), set: (o,k,v) => (o[k] = v, true) });
   function node(id) {
-    return nodes[id] ||= { style: {}, classList: { add() {}, remove() {}, toggle() {} }, addEventListener(event, handler) { listeners[id + ':' + event] = handler; }, getContext: () => context, getBoundingClientRect() { const field = nodes.playfield.style; return { left: parseFloat(field.left) || 0, top: parseFloat(field.top) || 0, width: parseFloat(this.style.width) || 1600, height: parseFloat(this.style.height) || 900 }; }, setPointerCapture() {} };
+    return nodes[id] ||= { style: {}, dataset: {}, children: [], append(child) { this.children.push(child); child.parent=this; }, remove() { if(this.parent) this.parent.children=this.parent.children.filter(n=>n!==this); }, setAttribute(name,value) { this[name]=value; }, classList: { add() {}, remove() {}, toggle() {} }, addEventListener(event, handler) { listeners[id + ':' + event] = handler; }, getContext: () => context, getBoundingClientRect() { const field = nodes.playfield.style; return { left: parseFloat(field.left) || 0, top: parseFloat(field.top) || 0, width: parseFloat(this.style.width) || 1600, height: parseFloat(this.style.height) || 900 }; }, setPointerCapture() {} };
   }
   const sandbox = { console, performance: { now: () => sandbox.now }, now: 1000, document: { hidden: false, getElementById: node, createElement: () => node('cache' + Math.random()), addEventListener(event, handler) { listeners['document:' + event] = handler; } }, window: { innerWidth: 1280, innerHeight: 720, matchMedia: () => ({ matches: false }), addEventListener(event, handler) { listeners['window:' + event] = handler; } }, navigator: { maxTouchPoints: 0, userAgent: '' }, requestAnimationFrame() {}, setTimeout: () => 1, clearTimeout() {} };
   if (effects) sandbox.window.SFX=effects;
+  // Keep gameplay fixtures reproducible; seed tests override this explicitly.
+  sandbox.Math=Object.create(Math);
+  sandbox.Math.random=()=>.25;
   sandbox.atob=atob;
   vm.createContext(sandbox);
-  for (const file of ["world-shapes.js","world.js","enemies.js"]) vm.runInContext(fs.readFileSync(require("node:path").join(__dirname,"..",file),"utf8"),sandbox);
+  for (const file of ["world-shapes.js","world.js","enemies.js","controls.js"]) vm.runInContext(fs.readFileSync(require("node:path").join(__dirname,"..",file),"utf8"),sandbox);
   let source = fs.readFileSync(require('node:path').join(__dirname, '../game.js'), 'utf8');
   source = source.slice(0, source.lastIndexOf('\nresizeCanvasToViewport();'));
   vm.runInContext(source, sandbox);
@@ -81,12 +84,12 @@ test('rapid touch taps between animation frames all count, keyboard repeat is ig
     listeners['game:pointerdown']({clientX:100+i*100,clientY:200,pointerId:7,preventDefault(){}});
     listeners['game:pointerup']({clientX:0,clientY:0,pointerId:7});
   }
-  run('loop(16);');
+  run('loop(17);');
   assert.equal(run('lysis.pressure'), 0.42);
   const key = {key:' ',repeat:false,preventDefault(){}};
   listeners['window:keydown'](key);
   for(let i=0;i<5;i++) listeners['window:keydown']({...key,repeat:true});
-  run('loop(32);');
+  run('loop(34);');
   assert.equal(run('lysis.pressure'), 0.525);
 });
 
@@ -153,7 +156,7 @@ test('viewport fills the screen; portrait pauses hard-mode clock without losing 
   assert.equal(run('state'), 'dna_replication');
   sandbox.window.innerWidth=844; sandbox.window.innerHeight=390;
   run('resizeCanvasToViewport(); loop(48);');
-  assert.equal(run('hardModeStartedAt'),121000);
+  assert.equal(run('hardModeElapsed'),0);
   assert.equal(run('landscapeReady'),true);
   assert.ok(run('canvas.getBoundingClientRect().width <= window.innerWidth'));
   assert.ok(run('canvas.getBoundingClientRect().height <= window.innerHeight'));
@@ -174,7 +177,7 @@ test('fullscreen rejection is handled and explains how to keep playing', async (
   const { run, sandbox, nodes } = game();
   sandbox.document.documentElement = { async requestFullscreen() { throw new Error('denied'); } };
   await run('toggleFullscreen()');
-  assert.match(nodes.displayNotice.textContent, /Gira el dispositivo/);
+  assert.match(nodes.displayNotice.textContent, /Puedes seguir jugando en horizontal/);
   assert.equal(nodes.rotateStatus.textContent, nodes.displayNotice.textContent);
 });
 
@@ -187,7 +190,7 @@ test('hidden-tab pause is recorded even if no animation frames run in background
   sandbox.document.hidden=false;
   listeners['document:visibilitychange']();
   run('loop(180016);');
-  assert.equal(run('hardModeStartedAt'),181000);
+  assert.equal(run('hardModeElapsed'),0);
   assert.equal(run('state'), 'search');
 });
 
@@ -278,10 +281,10 @@ test('escape preserves every released phage screen position and camera follows t
     if(lysis.released.slice(1).some(p=>Math.hypot(p.vx,p.vy)>=hspeed)) return false;
     updateEscape(ESCAPE_SECONDS/2);
     if(camera.zoom<=1 || camera.zoom>=escape.camera.zoom) return false;
-    const seed=targetBacteria.seed;
+    const id=targetBacteria.id;
     updateEscape(ESCAPE_SECONDS/2);
     const screen=worldToScreen(player.x,player.y);
-    return state===State.SEARCH && Math.hypot(screen.x-W/2,screen.y-H/2)<1e-8 && infectedBacteriaSeeds.has(seed) && !bacteriaField.find(b=>b.seed===seed)?.infectable;
+    return state===State.SEARCH && Math.hypot(screen.x-W/2,screen.y-H/2)<1e-8 && infectedBacteriaIds.has(id) && !bacteriaField.find(b=>b.id===id)?.infectable;
   })()`),true);
 });
 
@@ -774,6 +777,30 @@ test('biosynthesis progress is below the cell and above the footer explanation',
   })()`),true);
 });
 
+test('new games reseed every world layer; revisits and cycle resets keep the same world', () => {
+  const {run}=game();
+  assert.equal(run(`(() => {
+    Math.random=()=>.25;
+    startGame(GameMode.NORMAL);
+    const firstSeed=worldSeed;
+    const snapshot=()=>JSON.stringify([...bacteriaField,...cellField].map(b=>[b.id,b.x,b.y,b.seed,b.variant,b.sprite]).sort());
+    const first=snapshot();
+    const background=JSON.stringify(PARALLAX_LAYERS.map((_,i)=>getBackgroundCells(i)));
+    player.x=100000;player.y=-100000;updateProceduralBacteriaIfNeeded(true);
+    resetCycleState(50,50,.65);cellField=[];updateProceduralBacteriaIfNeeded(true);
+    if(worldSeed!==firstSeed || snapshot()!==first) return false;
+    resetGame();
+    Math.random=()=>.75;
+    startGame(GameMode.HARD);
+    if(worldSeed===firstSeed || snapshot()===first) return false;
+    if(JSON.stringify(PARALLAX_LAYERS.map((_,i)=>getBackgroundCells(i)))===background) return false;
+    if(ambientLife.some(scene=>scene && scene.seed!==makeBackgroundCell(scene.layer,...scene.cellId.split(':').slice(1).map(Number)).seed)) return false;
+    const secondSeed=worldSeed;
+    resetGame();startGame(GameMode.NORMAL);
+    return worldSeed!==secondSeed;
+  })()`),true);
+});
+
 test('world blocks contain exactly half cells, one quarter healthy and one quarter damaged bacteria', () => {
   const {run}=game();
   assert.equal(run(`(() => {
@@ -1109,7 +1136,7 @@ test('pushing transfers motion through neighbouring bodies and their positions s
     for(let i=0;i<900;i++){moveMacrophage(e,0,MACROPHAGE.chaseSpeed,1/60);updateWorldCells(1/60);}
     if(first.x<=650 || second.x<=1170 || !second.enemyMovable) return false;
     startGame(GameMode.HARD);
-    const b=bacteriaField.find(body=>Math.hypot(body.x-player.x,body.y-player.y)<1200);
+    const b=bacteriaField.find(body=>Math.hypot(body.x-player.x,body.y-player.y)<ACTIVE_RADIUS);
     b.x+=120;b.rotation+=.2;const x=b.x,rotation=b.rotation;
     updateProceduralBacteriaIfNeeded(true);
     const kept=bacteriaField.find(body=>body.seed===b.seed);
@@ -1123,10 +1150,360 @@ test('finishing a cycle keeps the pushed bacterium remains at their actual world
     startGame(GameMode.HARD);targetBacteria=bacteriaField.find(isBacteriaInteractable);
     targetBacteria.x+=130;targetBacteria.y+=50;
     const b=targetBacteria,x=b.x,y=b.y;
-    b.variant=6;b.healthy=false;b.infectable=false;b.health='broken';infectedBacteriaSeeds.add(b.seed);
+    b.variant=6;b.healthy=false;b.infectable=false;b.health='broken';infectedBacteriaIds.add(b.id);
     escape={hero:{x:x+300,y,vx:50,vy:0,rotation:0}};
     returnToFlightAfterKill();
     const kept=bacteriaField.find(body=>body.seed===b.seed);
     return kept===b && kept.x===x && kept.y===y && !isBacteriaInteractable(kept);
+  })()`),true);
+});
+
+test('simulation, movement and hard clock agree at 20, 30, 60 and 120 FPS', () => {
+  const snapshots=[];
+  for(const fps of [20,30,60,120]) {
+    const {run}=game();
+    run('startGame(GameMode.HARD); keys.add("w"); worldTime=0;');
+    for(let i=1;i<=fps;i++) run(`loop(${i*1000/fps})`);
+    snapshots.push(JSON.parse(run('JSON.stringify({time:worldTime,clock:hardModeElapsed,x:player.x,y:player.y})')));
+  }
+  for(const value of snapshots) {
+    assert.ok(Math.abs(value.time-1)<1e-9);
+    assert.ok(Math.abs(value.clock-1000)<1e-6);
+    assert.deepEqual(value,snapshots[0]);
+  }
+});
+
+test('long stalls cap both clocks and returning from a 30 second pause does not catch up', () => {
+  const {run,sandbox,listeners}=game();
+  run('startGame(GameMode.HARD);worldTime=0;loop(500);');
+  assert.ok(Math.abs(run('worldTime')-.25)<1e-9);
+  assert.ok(Math.abs(run('hardModeElapsed')-250)<1e-6);
+  sandbox.document.hidden=true;listeners['document:visibilitychange']();
+  sandbox.now+=30000;sandbox.document.hidden=false;listeners['document:visibilitychange']();
+  run('loop(30500);');
+  assert.ok(Math.abs(run('worldTime')-.25)<1e-9);
+  run('loop(30517);');
+  assert.ok(Math.abs(run('worldTime')-(.25+1/60))<1e-9);
+});
+
+test('camera smoothing and velocity damping use elapsed time in direct updates', () => {
+  const values=[];
+  for(const fps of [30,60,120]) {
+    const {run}=game();
+    values.push(run(`(()=>{startGame(GameMode.NORMAL);bacteriaField=[];cellField=[];currentProcCell={x:0,y:0};
+      camera.x=-1000;particles=[{life:2,x:0,y:0,vx:100,vy:100}];
+      for(let i=0;i<${fps};i++){updateSearch(1/${fps});updateParticles(1/${fps});}
+      return [camera.x,particles[0].vx];})()`));
+  }
+  for(const v of values) for(let i=0;i<2;i++) assert.ok(Math.abs(v[i]-values[0][i])<1e-8);
+});
+
+function dragFixture() {
+  const instance=game();
+  instance.run('setState(State.PART_ASSEMBLY);const item=makePart("genome",W/2,450);let drops=0;');
+  const event=(pointerId,x=800,y=450)=>({pointerId,clientX:x*.8,clientY:y*.8,preventDefault(){}});
+  instance.listeners['game:pointerdown'](event(1));
+  instance.run('handleDrag([item],()=>drops++);mouse.justDown=false;');
+  return {...instance,event};
+}
+
+test('a second finger cannot replace, move, drop or cancel the owner drag', () => {
+  const {run,listeners,event}=dragFixture();
+  listeners['game:pointerdown'](event(2,200,200));
+  listeners['game:pointermove'](event(2,300,300));
+  listeners['game:pointerup'](event(2,300,300));
+  listeners['game:lostpointercapture'](event(2));
+  run('handleDrag([item],()=>drops++);');
+  assert.equal(run('mouse.pointerId'),1);assert.equal(run('mouse.down'),true);
+  assert.equal(run('item.x'),800);assert.equal(run('drops'),0);
+  listeners['game:pointermove'](event(1,850,450));
+  run('handleDrag([item],()=>drops++);');
+  listeners['game:pointerup'](event(1,850,450));
+  listeners['game:lostpointercapture'](event(1));
+  run('handleDrag([item],()=>drops++);mouse.justUp=false;handleDrag([item],()=>drops++);');
+  assert.equal(run('drops'),1);assert.equal(run('dragItem'),null);
+});
+
+test('capture loss, cancellation, pause and transitions cancel a drag without placing it', () => {
+  for(const reason of ['lostpointercapture','pointercancel','pause','transition']) {
+    const {run,listeners,event}=dragFixture();
+    listeners['game:pointermove'](event(1,850,450));run('handleDrag([item],()=>drops++);');
+    if(reason==='pause') run('clearHeldInputs();');
+    else if(reason==='transition') run('setState(State.LYSIS);');
+    else listeners[`game:${reason}`](event(1));
+    assert.equal(run('item.x'),800,reason);assert.equal(run('item.dragging'),false,reason);
+    assert.equal(run('mouse.down'),false);assert.equal(run('mouse.pointerId'),null);assert.equal(run('drops'),0);
+  }
+});
+
+test('coordinate IDs separate bacteria and cells even when every random seed collides', () => {
+  const {run}=game();
+  assert.equal(run(`(()=>{
+    hash2=()=>42;startGame(GameMode.NORMAL);
+    const first=bacteriaField.filter(isBacteriaInteractable)[0],second=bacteriaField.filter(isBacteriaInteractable)[1];
+    if(first.seed!==second.seed || first.id===second.id) return false;
+    infectedBacteriaIds.add(first.id);
+    const firstId=first.id,secondId=second.id;
+    bacteriaField=[];cellField=[];updateProceduralBacteriaIfNeeded(true);
+    return !bacteriaField.find(b=>b.id===firstId).infectable && bacteriaField.find(b=>b.id===secondId).infectable &&
+      new Set([...bacteriaField,...cellField].map(b=>b.id)).size===bacteriaField.length+cellField.length;
+  })()`),true);
+});
+
+test('displaced bacteria, remains, cells and platelets survive by actual position and eventually unload', () => {
+  for(const kind of ['healthy','remains','cell','platelet']) {
+    const {run}=game();
+    assert.equal(run(`(()=>{
+      startGame(GameMode.HARD);
+      let body=${kind==='healthy'||kind==='remains'?'bacteriaField.find(isBacteriaInteractable)':'cellField[0]'};
+      ${kind==='platelet'?"const replacement=makeWorldCell('plaqueta',body.x,body.y,body.seed,body.id);cellField[cellField.indexOf(body)]=replacement;body=replacement;":''}
+      const original={x:body.x,y:body.y},id=body.id;
+      ${kind==='remains'?"body.variant=6;body.healthy=body.infectable=false;infectedBacteriaIds.add(id);":''}
+      body.x=4000;body.y=500;player.x=4000;player.y=500;updateProceduralBacteriaIfNeeded(true);
+      if(![...bacteriaField,...cellField].includes(body)) return false;
+      player.x=original.x;player.y=original.y;updateProceduralBacteriaIfNeeded(true);
+      if([...bacteriaField,...cellField].filter(b=>b.id===id).length!==1) return false;
+      player.x=20000;updateProceduralBacteriaIfNeeded(true);
+      return ![...bacteriaField,...cellField].includes(body);
+    })()`),true,kind);
+  }
+});
+
+test('fullscreen denial permits landscape play and can be retried successfully', async () => {
+  const {run,sandbox}=game();
+  sandbox.document.documentElement={requestFullscreen:async()=>{throw Error('denied');}};
+  run('mobileControls=true;landscapeReady=true;');
+  assert.equal(run('isDisplayBlocked()'),true);
+  await run('toggleFullscreen()');
+  run('mobileControls=true;');
+  assert.equal(run('isDisplayBlocked()'),false);
+  sandbox.document.documentElement.requestFullscreen=async()=>{sandbox.document.fullscreenElement={};};
+  await run('toggleFullscreen()');
+  assert.equal(run('fullscreenDeclined'),false);
+  sandbox.document.fullscreenElement=null;
+  run('mobileControls=true;');assert.equal(run('requiresFullscreen()'),true);
+});
+
+test('loading rejects early starts, retries essential images and tolerates decorative and font errors', async () => {
+  const {run,sandbox,nodes}=game();
+  run('gameReady=false;for(const key of Object.keys(img)) delete img[key];');
+  run('startGame(GameMode.HARD);');assert.equal(run('state'),'intro');
+  const requests=[];let failEssential=true;
+  sandbox.Image=class {
+    constructor(){this.width=this.height=512;}
+    set src(url){requests.push(url);queueMicrotask(()=>{
+      if(url.includes('Intro_back_V2') || (failEssential && url.includes('DNA_broken'))) this.onerror?.();else this.onload?.();
+    });}
+  };
+  sandbox.document.fonts={load:async()=>{throw Error('font offline');}};
+  let frames=0;sandbox.requestAnimationFrame=()=>frames++;
+  await run('bootstrapGame()');
+  assert.equal(run('gameReady'),false);assert.equal(nodes.normalButton.disabled,true);
+  assert.match(nodes.loadingStatus.textContent,/DNA_broken/);assert.equal(frames,0);
+  failEssential=false;await run('bootstrapGame()');
+  assert.equal(run('gameReady'),true);assert.equal(nodes.normalButton.disabled,false);
+  assert.equal(run('img.introBack.fallback'),true);assert.equal(frames,1);
+  await run('bootstrapGame()');assert.equal(frames,1);
+  assert.ok(requests.every(url=>url.includes('?v='+run('BUILD_VERSION'))));
+  run('startGame(GameMode.HARD);');assert.equal(run('state'),'search');
+});
+
+test('the enemy collider follows dominant poses and capture waits for a visibly closed cup', () => {
+  const {run}=game();
+  assert.equal(run(`(()=>{
+    startGame(GameMode.HARD);bacteriaField=[];cellField=[];macrophageGrace=0;
+    const e=makeMacrophage(0,0);macrophages=[e];changeMacrophageMode(e,'close');
+    const mouth=macrophageMouth(e);player.x=mouth.x;player.y=mouth.y;
+    for(let i=0;i<20;i++) updateMacrophages(1/60);
+    if(state!==State.SEARCH || e.sprite!=='macrofago_closed') return false;
+    for(let i=0;i<14 && state===State.SEARCH;i++) updateMacrophages(1/60);
+    if(state!==State.GAME_OVER || !macrophagePose(e).captureReady) return false;
+    changeMacrophageMode(e,'recover');if(e.sprite!=='macrofago_closed') return false;
+    state=State.SEARCH;player.y=800;e.elapsed=1.5;updateMacrophages(0);
+    return e.sprite==='macrofago_idle';
+  })()`),true);
+});
+
+test('all macrophage glows are built once with explicit threat color', () => {
+  const {run}=game();
+  assert.equal(run(`['macrofago_idle','macrofago_reach','macrofago_closed'].every(key=>silhouetteGlows[key]?.color==='#ff3535')`),true);
+});
+
+test('bubble regeneration freezes during tab, orientation and sound-panel pauses', () => {
+  for(const reason of ['tab','orientation','sound']) {
+    const {run,sandbox}=game();
+    run('startGame(GameMode.NORMAL);worldTime=0;poppedBubbles.set("test",12);');
+    if(reason==='tab') sandbox.document.hidden=true;
+    else if(reason==='orientation') run('landscapeReady=false;');
+    else run('soundEffects.menuOpen=true;');
+    run('loop(16);');sandbox.now+=30000;
+    sandbox.document.hidden=false;run('landscapeReady=true;soundEffects.menuOpen=false;loop(30016);');
+    assert.equal(run('poppedBubbles.has("test")'),true,reason);
+    run('worldTime=12;expirePoppedBubbles();');assert.equal(run('poppedBubbles.has("test")'),false);
+  }
+});
+
+test('state changes and resets invalidate old pointer and semantic UI before the next render', () => {
+  const {run}=game();
+  assert.equal(run(`(()=>{
+    startGame(GameMode.HARD);render(0);const stale=semanticNodes.get('movement-mode');
+    macrophageGrace=0;captureByMacrophage(makeMacrophage(0,0));
+    if(uiButtons.length || semanticNodes.size) return false;
+    const mode=desktopMovementMode;
+    if(handleUiPointerDown({x:stale.control.x+2,y:stale.control.y+2},1)) return false;
+    resetGame();return uiButtons.length===0 && desktopMovementMode===mode;
+  })()`),true);
+});
+
+test('semantic minigame controls select DNA, match letters and assemble parts with click activation', () => {
+  const {run}=game();
+  assert.equal(run(`(()=>{
+    startGame(GameMode.NORMAL);createInitialDnaFromInjection();setState(State.DNA_REPLICATION);render(0);
+    for(let i=0;i<4;i++){semanticNodes.get('dna-'+replication.dnaPieces.find(d=>!d.duplicated).id).control.onClick();render(0);}
+    semanticNodes.get('dna-1').control.onClick();render(0);
+    if(state!==State.NUCLEOTIDE_MINIGAME) return false;
+    while(state===State.NUCLEOTIDE_MINIGAME) {
+      const slot=nucleotideGame.slots.find(s=>!s.filled),si=nucleotideGame.slots.indexOf(slot);
+      const ni=nucleotideGame.nucleotides.findIndex(n=>n.code===slot.code);
+      semanticNodes.get('nucleotide-'+ni).control.onClick();
+      semanticNodes.get('slot-'+si).control.onClick();render(0);
+    }
+    if(state!==State.BIOSYNTHESIS) return false;
+    stateTime=3.1;update(1/60,false,0);render(0);
+    for(const [source,destination] of [['genome','head'],['head','body'],['body','legs']]) {
+      semanticNodes.get('part-'+source).control.onClick();render(0);
+      semanticNodes.get('part-'+destination).control.onClick();render(0);
+    }
+    return assembly.completed===1 && assembly.activeParts.length===0;
+  })()`),true);
+});
+
+test('device safe insets translate into canvas coordinates without resetting equal backbuffers', () => {
+  const {run,sandbox}=game();
+  sandbox.window.getComputedStyle=()=>({paddingLeft:'32px',paddingRight:'20px',paddingTop:'8px',paddingBottom:'12px'});
+  run('resizeCanvasToViewport();');
+  assert.equal(run('viewportSafe.left'),40);assert.equal(run('viewportSafe.right'),1575);
+  assert.equal(run('viewportSafe.top'),10);assert.equal(run('viewportSafe.bottom'),885);
+  let resets=0;
+  Object.defineProperty(sandbox.document.getElementById('game'),'width',{get:()=>1600,set:()=>resets++});
+  run('resizeCanvasToViewport();');assert.equal(resets,0);
+});
+
+test('an image timeout ends the attempt and a late load cannot overwrite its result', async () => {
+  const {run,sandbox}=game();
+  let timeout,image;
+  sandbox.setTimeout=callback=>{timeout=callback;return 9;};
+  sandbox.Image=class { constructor(){image=this;} set src(value){this.url=value;} };
+  const attempt=run('loadImage("assets_webp/Phage_Sprite.webp")');
+  const settled=assert.rejects(attempt,/Tiempo de espera agotado/);
+  timeout();await settled;
+  assert.equal(image.onload,null);assert.equal(image.onerror,null);
+});
+
+test('a pointer menu transition does not capture a pointer on the new screen', () => {
+  const {run,listeners,nodes}=game();let captures=0;
+  nodes.game.setPointerCapture=()=>captures++;
+  run('startGame(GameMode.HARD);macrophageGrace=0;captureByMacrophage(makeMacrophage(0,0));stateTime=1;render(0);');
+  const button=run('uiButtons.find(b=>b.id==="game-over-menu")');
+  listeners['game:pointerdown']({pointerId:1,clientX:(button.x+3)*.8,clientY:(button.y+3)*.8,preventDefault(){}});
+  assert.equal(run('state'),'intro');assert.equal(captures,0);
+});
+
+test('phase prompts describe adhesion and DNA injection rather than infestation', () => {
+  const {run}=game();
+  assert.match(run('state=State.SEARCH;actionPromptText()'),/Adherirse/);
+  assert.match(run('state=State.ADSORPTION;attachTimer=0;actionPromptText()'),/Adhiriéndose/);
+  assert.match(run('attachTimer=DOCK_SECONDS;actionPromptText()'),/iniciar la inyección/);
+  assert.match(run('state=State.INJECTION;actionPromptText()'),/inyectar ADN/);
+});
+
+test('spawn visibility includes the full rotated image even when its centre is outside', () => {
+  const {run}=game();
+  assert.equal(run(`(()=>{
+    startGame(GameMode.HARD);camera={x:0,y:0,zoom:1};
+    const e=makeMacrophage(W+100,H/2);
+    if(isMacrophageOutsideView(e)) return false;
+    e.x=W+MACROPHAGE.spawnPadding+280;
+    if(!isMacrophageOutsideView(e)) return false;
+    e.rotation=Math.PI/4;
+    if(isMacrophageOutsideView(e)) return false;
+    e.x+=100;
+    if(!isMacrophageOutsideView(e)) return false;
+    // The same canvas must remain offscreen throughout opening and closing.
+    return ['patrol','windup','close','recover'].every(mode=>{
+      changeMacrophageMode(e,mode);return isMacrophageOutsideView(e);
+    });
+  })()`),true);
+});
+
+test('every spawn stays outside the camera on tablet, phone and wide screens at different zooms', () => {
+  for(const [width,height] of [[1280,720],[1024,768],[844,390],[2560,720]]) {
+    const {run,sandbox}=game();
+    sandbox.window.innerWidth=width;sandbox.window.innerHeight=height;
+    run('resizeCanvasToViewport();startGame(GameMode.HARD);bacteriaField=[];cellField=[];');
+    for(const zoom of [.65,1,1.6]) {
+      assert.equal(run(`(()=>{
+        for(let i=0;i<24;i++) {
+          macrophages=[];player.x=i*137-1700;player.y=i*83-900;
+          camera={x:player.x-W*(i%2?.35:.7)/${zoom},y:player.y-H*.65/${zoom},zoom:${zoom}};
+          if(!spawnMacrophage()) return false;
+          const e=macrophages[0],bounds=macrophageScreenBounds(e);
+          if(!(bounds.right<=-MACROPHAGE.spawnPadding || bounds.left>=W+MACROPHAGE.spawnPadding || bounds.bottom<=-MACROPHAGE.spawnPadding || bounds.top>=H+MACROPHAGE.spawnPadding)) return false;
+          if(Math.hypot(e.x-player.x,e.y-player.y)>=ACTIVE_RADIUS) return false;
+        }
+        return true;
+      })()`),true,`${width}x${height}, zoom ${zoom}`);
+    }
+  }
+});
+
+
+test('spawn retries instead of placing an enemy inside the view or on an obstacle', () => {
+  const {run}=game();
+  assert.equal(run(`(()=>{
+    startGame(GameMode.HARD);bacteriaField=[];cellField=[];macrophages=[];
+    camera={x:player.x-W/.2,y:player.y-H/.2,zoom:.1};
+    if(spawnMacrophage() || macrophages.length) return false;
+    camera={x:player.x-W/2,y:player.y-H/2,zoom:1};
+    macrophageClearance=()=>-1;
+    return !spawnMacrophage() && macrophages.length===0;
+  })()`),true);
+});
+
+test('the edge warning points at the enemy from the actual player position', () => {
+  const {run}=game();
+  assert.equal(run(`(()=>{
+    startGame(GameMode.HARD);macrophageGrace=0;
+    camera={x:player.x-W*.7,y:player.y-H*.35,zoom:1};
+    for(const [dx,dy,edge] of [[650,0,'right'],[-650,0,'left'],[0,650,'bottom'],[0,-650,'top'],[650,-650,'corner']]) {
+      macrophages=[makeMacrophage(player.x+dx,player.y+dy)];
+      const warning=macrophageEdgeWarning();
+      if(!warning || warning.strength<=0 || warning.strength>1) return false;
+      if(edge==='right' && (warning.x!==W || Math.abs(warning.y-H*.35)>1e-8)) return false;
+      if(edge==='left' && (warning.x!==0 || Math.abs(warning.y-H*.35)>1e-8)) return false;
+      if(edge==='bottom' && (warning.y!==H || Math.abs(warning.x-W*.7)>1e-8)) return false;
+      if(edge==='top' && (warning.y!==0 || Math.abs(warning.x-W*.7)>1e-8)) return false;
+      if(edge==='corner' && !(warning.y===0 && warning.x>W*.7)) return false;
+    }
+    return true;
+  })()`),true);
+});
+
+test('the warning strengthens nearby and disappears when far, protected or outside hard-mode flight', () => {
+  const {run}=game();
+  assert.equal(run(`(()=>{
+    startGame(GameMode.HARD);macrophageGrace=0;
+    const e=makeMacrophage(player.x+1200,player.y);macrophages=[e];
+    const far=macrophageEdgeWarning();e.x=player.x+600;const near=macrophageEdgeWarning();
+    if(!far || !near || near.strength<=far.strength) return false;
+    e.x=player.x+2000;if(macrophageEdgeWarning()) return false;
+    e.x=player.x+600;macrophageGrace=1;if(macrophageEdgeWarning()) return false;
+    macrophageGrace=0;
+    for(const mode of [GameMode.NORMAL,GameMode.HARD]) for(const phase of Object.values(State)) {
+      gameMode=mode;state=phase;
+      if(mode===GameMode.HARD && phase===State.SEARCH) continue;
+      if(macrophageEdgeWarning()) return false;
+    }
+    return true;
   })()`),true);
 });
