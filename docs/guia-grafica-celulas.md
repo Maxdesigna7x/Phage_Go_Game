@@ -2,7 +2,7 @@
 
 ## Alcance
 
-Análisis visual de los 52 WebP actuales de `assets_webp/` y sus subcarpetas, más las 16 referencias de `ref/celulas/`. Se preparan 10 familias × 3 variantes = 30 originales independientes en `assets/celulas/`. Son propuestas para selección artística; no se añaden todavía al juego. Los nombres biológicos son interpretaciones visuales para organizar referencias ilustradas, no identificaciones microscópicas verificadas.
+Este análisis nació con un inventario de 52 WebP. Desde entonces se produjeron e integraron las 30 variantes de células descritas aquí; la comprobación actual revisa 84 WebP de distribución y 40 formas alfa/SDF. Las diez familias tienen tres variantes cada una en los originales de `assets/celulas/`; la integración en el mundo se describe en [PLAN-MUNDO-CELULAS.md](PLAN-MUNDO-CELULAS.md). Los nombres biológicos son interpretaciones visuales para organizar referencias ilustradas, no identificaciones microscópicas verificadas.
 
 ## Lenguaje visual observado
 
@@ -26,7 +26,7 @@ ADN y nucleótidos usan naranja, coral, verde y azul como acentos cálidos o fun
 
 Un elemento por PNG RGBA, fondo realmente transparente, lienzo solicitado de 1024×1024, cuerpo alrededor del 75 % del lienzo y márgenes suficientes para flagelos o pseudópodos. El generador entregó los primeros originales a 1254×1254; se conservan sin redimensionar. Las dimensiones efectivas de cada archivo se registran en el manifiesto. Cada familia ofrece tres diseños del mismo elemento: compacto/base, más ovalado y frío, más ancho y cálido. Son alternativas artísticas, no fases de animación ni estados de infección.
 
-La escala biológica no se expresa normalizando todo al mismo tamaño visible en el juego. Una futura integración debe definir tamaños relativos: plaquetas menores que eritrocitos y leucocitos; células eucariotas mayores que bacterias. Los fagos infectan las bacterias; las células del huésped propuestas son decoración ambiental, no nuevos objetivos de infección.
+La escala biológica no se expresa normalizando todo al mismo tamaño visible en el juego. La integración actual define tamaños relativos jugables: plaquetas menores que eritrocitos y leucocitos; células eucariotas mayores que bacterias. Los fagos infectan las bacterias compatibles; las células humanas y animales son decoración ambiental, no objetivos de infección.
 
 ## Inventario y decisión por referencia
 
@@ -34,20 +34,20 @@ Los números corresponden al orden alfabético de los archivos originales. Se co
 
 | ID | Archivo original | Grupo | Decisión |
 | --- | --- | --- | --- |
-| 01 | `Imagen de ChatGPT 19 oct 2026, 06_17_58 p.m-1.png` | eritrocito | Generar una serie de tres variantes por grupo. |
-| 02 | `Imagen de ChatGPT 19 oct 2026, 06_18_03 p.m-2.png` | neutrofilo | Generar una serie de tres variantes por grupo. |
+| 01 | `Imagen de ChatGPT 19 oct 2026, 06_17_58 p.m-1.png` | eritrocito | Tres variantes producidas e integradas; distribución en el plano jugable. |
+| 02 | `Imagen de ChatGPT 19 oct 2026, 06_18_03 p.m-2.png` | neutrofilo | Tres variantes producidas e integradas; distribución en el plano jugable. |
 | 03 | `Imagen de ChatGPT 19 oct 2026, 06_18_06 p.m-3.png` | neurona | Excluir: célula especializada de tejido nervioso; fuera del ambiente solicitado. |
 | 04 | `Imagen de ChatGPT 19 oct 2026, 06_18_10 p.m-4.png` | celula_vegetal | Excluir: pared rígida y cloroplastos; introduce un ambiente vegetal ajeno al actual. |
 | 05 | `Imagen de ChatGPT 19 oct 2026, 06_18_13 p.m-5.png` | espermatozoide | Excluir: célula reproductora; exclusión expresa del usuario. |
-| 06 | `Imagen de ChatGPT 19 oct 2026, 06_18_28 p.m-1.png` | plaqueta | Generar una serie de tres variantes por grupo. |
-| 07 | `Imagen de ChatGPT 19 oct 2026, 06_18_32 p.m-2.png` | linfocito | Generar una serie de tres variantes por grupo. |
-| 08 | `Imagen de ChatGPT 19 oct 2026, 06_18_35 p.m-3.png` | monocito | Generar una serie de tres variantes por grupo. |
-| 09 | `Imagen de ChatGPT 19 oct 2026, 06_18_38 p.m-4.png` | eosinofilo | Generar una serie de tres variantes por grupo. |
-| 10 | `Imagen de ChatGPT 19 oct 2026, 06_18_41 p.m-5.png` | basofilo | Generar una serie de tres variantes por grupo. |
+| 06 | `Imagen de ChatGPT 19 oct 2026, 06_18_28 p.m-1.png` | plaqueta | Tres variantes producidas e integradas; distribución en el plano jugable. |
+| 07 | `Imagen de ChatGPT 19 oct 2026, 06_18_32 p.m-2.png` | linfocito | Tres variantes producidas e integradas; distribución en el plano jugable. |
+| 08 | `Imagen de ChatGPT 19 oct 2026, 06_18_35 p.m-3.png` | monocito | Tres variantes producidas e integradas; distribución en el plano jugable. |
+| 09 | `Imagen de ChatGPT 19 oct 2026, 06_18_38 p.m-4.png` | eosinofilo | Tres variantes producidas e integradas; distribución en el plano jugable. |
+| 10 | `Imagen de ChatGPT 19 oct 2026, 06_18_41 p.m-5.png` | basofilo | Tres variantes producidas e integradas; distribución en el plano jugable. |
 | 11 | `Imagen de ChatGPT 19 oct 2026, 06_22_32 p.m-1.png` | plaqueta | Agrupar con la plaqueta 06; sin serie adicional. |
-| 12 | `Imagen de ChatGPT 19 oct 2026, 06_22_36 p.m-2.png` | celula_animal | Generar una serie de tres variantes por grupo. |
-| 13 | `Imagen de ChatGPT 19 oct 2026, 06_22_39 p.m-3.png` | bacilo | Generar una serie de tres variantes por grupo. |
-| 14 | `Imagen de ChatGPT 19 oct 2026, 06_22_42 p.m-4.png` | espirilo | Generar una serie de tres variantes por grupo. |
+| 12 | `Imagen de ChatGPT 19 oct 2026, 06_22_36 p.m-2.png` | celula_animal | Tres variantes producidas e integradas; distribución en el plano jugable. |
+| 13 | `Imagen de ChatGPT 19 oct 2026, 06_22_39 p.m-3.png` | bacilo | Tres variantes producidas e integradas como decoración ambiental. |
+| 14 | `Imagen de ChatGPT 19 oct 2026, 06_22_42 p.m-4.png` | espirilo | Tres variantes producidas e integradas como decoración ambiental. |
 | 15 | `Imagen de ChatGPT 19 oct 2026, 06_22_45 p.m-5.png` | celula_animal | Agrupar con la célula animal 12; sin serie adicional. Su forma cuadrada es una licencia visual, no una identidad distinta demostrable. |
 | 16 | `Plaqueta brillante activada.png` | plaqueta | Agrupar con la plaqueta 06; sin serie adicional. |
 
@@ -57,7 +57,7 @@ Se excluyen neurona, espermatozoide y célula vegetal. Las células sanguíneas 
 
 Generación con la herramienta integrada de imágenes, una llamada por variante. `assets/celulas/prompts.json` conserva el texto exacto de cada encargo y su referencia de sujeto. Los originales PNG se guardan junto a ese archivo. El manifiesto registra rutas, dimensiones y alfa; la hoja de contacto permite revisión conjunta.
 
-Para una futura integración, convertir únicamente las versiones elegidas con `python scripts/convert_assets.py --output-dir assets_webp/celulas assets/celulas/Nombre.png`. Usar Pillow, RGBA, WebP con pérdida, quality=90, method=6 y exact=True; conservar dimensiones, alfa y márgenes, revisar visualmente el WebP y documentar cualquier excepción. Registrar solo los sprites usados en `ASSETS` de `game.js` y actualizar la versión del script en `index.html` cuando se cambie el juego.
+Para regenerar los recursos de distribución se usa `python scripts/convert_assets.py --max-size 512 --output-dir assets_webp/celulas assets/celulas/*.png`. La integración actual conserva los PNG originales, usa WebP RGBA de hasta 512 px y registra los recursos cargados por el juego. Se deben mantener dimensiones proporcionales y márgenes, y revisar cualquier cambio visual. Las reglas completas están en `AGENTS.md`.
 
 Las fases existentes de bacteria siguen compartiendo 1001×535, centro, escala y rotación. No sustituirlas por estos diseños ni recortar sus márgenes. Las ocho bacterias decorativas conservan su normalización independiente. `assets/` está ignorado por Git: conservar/copiar los originales como recursos locales; la guía versionable queda en `docs/`.
 
@@ -67,4 +67,4 @@ Se completaron los 30 PNG, tres por cada una de las diez familias. Todos son RGB
 
 Dos resultados iniciales de bacilo incluyeron un halo ambiental; una edición posterior tampoco lo eliminó adecuadamente. Se descartaron esas propuestas y se regeneraron las variantes 02 y 03 a partir de `bacilo_01.png`, obteniendo siluetas aisladas. Los prompts finales y originales quedan diferenciados en `prompts.json`. La vista general y el manifiesto corresponden únicamente a los 30 resultados seleccionados.
 
-Archivos de entrega: `assets/celulas/README.md`, `assets/celulas/vista_general.jpg`, `assets/celulas/manifest.json`, `assets/celulas/prompts.json` y los 30 PNG nombrados por elemento y variante. La revisión visual conjunta confirma siluetas completas y un lenguaje pintado coherente. Antes de usarlos en una escena habrá que elegir variantes y ajustar su tamaño relativo y opacidad según la capa del fondo.
+Archivos fuente de la entrega: `assets/celulas/README.md`, `assets/celulas/vista_general.jpg`, `assets/celulas/manifest.json`, `assets/celulas/prompts.json` y los 30 PNG nombrados por elemento y variante. La revisión visual conjunta confirma siluetas completas y un lenguaje pintado coherente. Sus tamaños de juego y la separación entre plano jugable y decoración están definidos en [PLAN-MUNDO-CELULAS.md](PLAN-MUNDO-CELULAS.md).

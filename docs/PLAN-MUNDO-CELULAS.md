@@ -24,7 +24,7 @@ La conversión mantiene los 30 originales intactos. La física usa una versión 
 
 Todos los puntos implementados. WebP de distribución: 30 archivos, **1.247.530 bytes**, máximo 512 px. Se ha comprobado que su alfa coincide con el del PNG reducido con el mismo filtro, conservando proporción y lienzo. La estimación de memoria de imagen RGBA de estas copias es de unos 30 MiB; no se cargan los originales de 1254 px en el juego.
 
-`world-shapes.js` contiene 37 campos precalculados (las 30 variantes nuevas y las siete fases de la bacteria), a 128 muestras por lado mayor. La física consulta estos campos en el sistema local del sprite, respetando giro y escala. El fago utiliza tres sondas en cabeza, cuerpo y fibras; las plaquetas consultan además puntos de su contorno al chocar con otros cuerpos. Es una aproximación de silueta para móvil, no una simulación de membranas deformables.
+`world-shapes.js` contiene 40 campos precalculados: 30 variantes celulares, siete fases de bacteria y tres fases del macrófago, a 128 muestras por lado mayor. La física consulta estos campos en el sistema local del sprite, respetando giro y escala. El fago utiliza tres sondas en cabeza, cuerpo y fibras; las plaquetas consultan además puntos de su contorno al chocar con otros cuerpos. Es una aproximación de silueta para móvil, no una simulación de membranas deformables.
 
 | Familia | Plano jugable | Tamaño visible aproximado en unidades del mundo | Movimiento al chocar |
 | --- | --- | --- | --- |

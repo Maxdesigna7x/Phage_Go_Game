@@ -1,4 +1,20 @@
-# Cambios solicitados — 19 de octubre de 2026
+# Historial de cambios del juego
+
+## Estado publicado — versión 2026.10.20-53
+
+- [x] Cada bacteria presenta una vez cada uno de los cinco minijuegos de nucleótidos, en orden aleatorio: arrastrar, pulsar la letra indicada, ordenar, atrapar piezas que caen y memoria.
+- [x] Las secuencias usan A, T, C y G en orden aleatorio. Ordenar comienza siempre con las cuatro fichas fuera de su posición correcta.
+- [x] Pulsar muestra una letra objetivo a la vez, inicia con casillas vacías y deja de señalar tras el primer acierto. Ordenar deja de mostrar el puntero después del primer intercambio.
+- [x] Memoria muestra las cuatro letras de una en una antes de pedir que se repita el patrón. Atrapar usa una caída lenta.
+- [x] En Atrapar, ratón y toque mueven la cesta por el desplazamiento del puntero desde cualquier zona del tablero; el gesto no coloca la cesta debajo del dedo.
+- [x] El progreso de los tutoriales visuales dura una partida y se reinicia al empezar otra.
+- [x] Documentación de jugabilidad, controles, tutoriales, mundo, recursos y verificaciones actualizada para reflejar el código actual.
+- Verificación actual: 119 pruebas automatizadas y comprobación de recursos con 84 WebP registrados y 40 siluetas alfa/SDF.
+- Publicación: GitHub Pages desde main en https://maxdesigna7x.github.io/Phage_Go_Game/
+
+El detalle vigente está en [docs/estado-actual.md](docs/estado-actual.md). Las entradas posteriores conservan el historial de versiones anteriores.
+
+## Implementación inicial — 19 de octubre de 2026
 
 - [x] Restaurar todos los assets de destrucción de la bacteria hasta la lisis.
 - [x] Eliminar aros y su panel.
@@ -29,9 +45,9 @@ Publicación: GitHub Pages desde `main` en https://maxdesigna7x.github.io/Phage_
 
 - Punteros originales `pointing_pulse_on/off` convertidos a WebP con lienzo y alfa intactos.
 - Ayudas animadas para movimiento, mantener sobre bacteria, inyección, duplicar/procesar ADN, arrastrar letras, las tres uniones del fago y pulsaciones de lisis.
-- Cada ayuda se retira al completar su acción y se recuerda localmente entre partidas. Las demostraciones solo mueven el puntero.
+- En esa versión, cada ayuda se retiraba al completar su acción y se guardaba entre partidas. Ese comportamiento se reemplazó después: en la versión actual el aprendizaje se conserva solo durante la partida y se reinicia al empezar otra.
 - Se retira el botón de infección: mantener sobre una bacteria compatible al alcance inicia el acople y permite continuar inyectando. Se conservan teclado y accesibilidad.
-- Verificación: 108 pruebas, revisión visual y recorrido en navegador desde pulsación sobre bacteria hasta ADN, sin errores de consola.
+- Verificación en ese corte: 108 pruebas, revisión visual y recorrido en navegador desde pulsación sobre bacteria hasta ADN, sin errores de consola.
 
 Detalle y lista de cambios: [docs/tutorial-visual.md](docs/tutorial-visual.md).
 

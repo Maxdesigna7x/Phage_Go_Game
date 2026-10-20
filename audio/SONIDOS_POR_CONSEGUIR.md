@@ -1,14 +1,14 @@
-# Sonidos por conseguir para Phage GO
+# Inventario de sonidos y especificación original de Phage GO
 
-Inventario para que otro agente busque, descargue o cree los sonidos del juego. Los archivos de audio se guardarán en `audio/sonidos/`. Este documento es una especificación: todavía no se han descargado ni integrado sonidos.
+La búsqueda y producción descritas en este documento se completaron. El catálogo actual contiene 58 efectos en `audio/sonidos/web/`; consulta [audio/README.md](README.md) para saber qué se carga en el juego y cómo se aplican las preferencias. Las tablas siguientes conservan la especificación sonora de origen y el inventario de archivos como registro, no como lista de tareas pendientes.
 
-## Dirección sonora
+## Criterios sonoros de producción
 
-Juego educativo infantil sobre el ciclo de los fagos. El sonido debe sentirse acuático, microscópico, orgánico, amable y ligeramente fantástico. Evitar terror, explosiones violentas, chillidos y avisos de error agresivos. Los efectos frecuentes deben ser cortos y suaves, sin cansar al repetirse. Las melodías deben compartir una misma familia de notas.
+El sonido del juego es acuático, microscópico, orgánico, amable y ligeramente fantástico. Se evitan terror, explosiones violentas, chillidos y avisos agresivos. Los efectos frecuentes son cortos y suaves; las melodías comparten una familia de notas.
 
-Buscar archivos con licencia que permita su uso y distribución en el juego publicado en GitHub Pages. Priorizar CC0; si requieren atribución, registrar el texto exacto. No descargar sonidos cuya licencia sea desconocida. Conservar el original y preparar una versión comprimida adecuada para navegador y móvil. Los bucles deben cerrar sin saltos. No aplicar reverberaciones largas a cada interacción.
+Los efectos se prepararon en formatos comprimidos para navegador y móvil. La mayoría se sintetizó localmente; las explosiones de burbujas usan una grabación CC0 importada, documentada en [CREDITOS.md](sonidos/fuentes/CREDITOS.md). Los bucles se suavizaron en sus extremos.
 
-Las duraciones siguientes son orientativas. Los nombres son identificadores propuestos, sin extensión, para permitir elegir el formato final. Varias interacciones pueden compartir un sonido base con cambios moderados de tono o volumen; no hace falta conseguir un archivo distinto para cada fila.
+Las duraciones de la tabla siguiente son orientativas y corresponden a la especificación original. Varias interacciones comparten un sonido base o variantes moderadas.
 
 ## Menú y exploración
 
@@ -88,16 +88,11 @@ Las duraciones siguientes son orientativas. Los nombres son identificadores prop
 
 ## Indicaciones para quien busque los archivos
 
-1. Conseguir primero los efectos principales: burbujas, selección, encaje, anclaje, inyección, lisis, explosión y superenergía. Después ambientes y melodías.
-2. Escuchar los candidatos en secuencia y en repetición. Comprobar especialmente que los pops y los golpes de lisis no resulten estridentes al pulsar rápido.
-3. Reutilizar sonidos cuando tenga sentido: interfaz/selección, encajes, confirmaciones y versiones lejanas del fondo. Los glows que laten no necesitan emitir sonido en cada latido.
-4. Evitar una música continua muy presente que compita con las instrucciones y los efectos. El juego debe seguir siendo comprensible con el sonido desactivado.
-5. Guardar los archivos en `audio/sonidos/` y completar el registro siguiente. Si no se encuentra un candidato adecuado, marcarlo como pendiente o proponer creación procedural; no sustituirlo silenciosamente por uno que no encaje.
-6. No integrar ni publicar audio por el solo hecho de completar esta búsqueda. Entregar primero los archivos y este inventario actualizado para su revisión.
+El catálogo actual integra efectos de interfaz, exploración, infección, ADN y nucleótidos, biosíntesis, ensamblaje, lisis y finales de partida. No se cargan ambientes continuos. Para la lista de archivos activos, consultar el catálogo y la descripción actual en audio/README.md.
 
-## Registro de archivos encontrados
+## Registro de archivos producidos
 
-Todos los sonidos de esta entrega se **generaron localmente por síntesis procedural** con [generar_sonidos.py](sonidos/generar_sonidos.py); no se descargaron ni se usaron muestras de terceros. No requieren atribución externa. Se guardó cada máster como WAV PCM estéreo de 44,1 kHz y 16 bits en `audio/sonidos/originales/`, y se exportaron versiones OGG Vorbis y MP3 comprimidas para web/móvil en `audio/sonidos/web/`. Los siete bucles tienen un fundido de cruce para suavizar la unión. Los niveles de los ambientes y bucles son intencionalmente bajos: ajustar su volumen desde el juego. El audio queda preparado como recurso; todavía no está conectado a `game.js`.
+Los efectos sintetizados localmente se generaron con [generar_sonidos.py](sonidos/generar_sonidos.py). Sus másteres son WAV PCM estéreo de 44,1 kHz y 16 bits en `audio/sonidos/originales/`; las versiones comprimidas OGG Vorbis y MP3 están en `audio/sonidos/web/`. Las explosiones de burbujas son la excepción: reutilizan una grabación externa CC0, con fuente y tratamiento descritos en [CREDITOS.md](sonidos/fuentes/CREDITOS.md). El juego usa el catálogo de `audio/catalog.js`; no carga música ni ambientes continuos.
 
 | Identificador(es) | Archivos locales (máster y versiones web) | Fuente / autor | Licencia / atribución | Duración y observaciones |
 | --- | --- | --- | --- | --- |

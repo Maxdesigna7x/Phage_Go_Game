@@ -1220,6 +1220,36 @@ function dragFixture() {
   return {...instance,event};
 }
 
+test('catch minigame moves the basket by pointer delta from anywhere in the playfield', () => {
+  const {run,listeners,nodes}=game();
+  const captured=[];
+  nodes.game.setPointerCapture=pointerId=>captured.push(pointerId);
+  run('nucleotideGame=createNucleotideGame({minigameType:"catch"});state=State.NUCLEOTIDE_MINIGAME;');
+  const initial=run('nucleotideGame.basketX');
+  const event=(pointerId,x,y,pointerType)=>({pointerId,pointerType,clientX:x*.8,clientY:y*.8,preventDefault(){}});
+
+  listeners['game:pointerdown'](event(7,180,820,'touch'));
+  assert.deepEqual(captured,[7]);
+  assert.equal(run('nucleotideGame.basketX'),initial,'starting a drag far from the basket must not teleport it');
+  listeners['game:pointermove'](event(7,230,40,'touch'));
+  assert.equal(run('nucleotideGame.basketX'),initial+50,'vertical movement does not affect the horizontal delta');
+
+  listeners['game:pointerdown'](event(8,1420,500,'touch'));
+  listeners['game:pointermove'](event(8,1500,500,'touch'));
+  assert.equal(run('nucleotideGame.basketX'),initial+50,'a second pointer cannot take over the drag');
+  listeners['game:pointermove'](event(7,210,870,'touch'));
+  assert.equal(run('nucleotideGame.basketX'),initial+30);
+  listeners['game:pointerup'](event(7,210,870,'touch'));
+  assert.equal(run('nucleotideGame.catchPointerId'),null);
+
+  listeners['game:pointerdown'](event(9,1320,450,'mouse'));
+  assert.deepEqual(captured,[7,9]);
+  listeners['game:pointermove'](event(9,1260,450,'mouse'));
+  assert.equal(run('nucleotideGame.basketX'),initial-30,'mouse dragging also moves relative to its starting point');
+  listeners['game:pointercancel'](event(9,1260,450,'mouse'));
+  assert.equal(run('nucleotideGame.catchPointerLastX'),null);
+});
+
 test('a second finger cannot replace, move, drop or cancel the owner drag', () => {
   const {run,listeners,event}=dragFixture();
   listeners['game:pointerdown'](event(2,200,200));

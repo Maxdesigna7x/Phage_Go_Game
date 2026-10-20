@@ -1,6 +1,10 @@
 # Comprobación y aplicación de la auditoría
 
-Revisión del 20 de octubre de 2026 sobre el código de trabajo de Phage-Go!, comparado con `794a94a9eecc686cca1566515c31196a2b871d0c`. La auditoría recibida está en `PHAGE-GO-AUDITORIA-Y-SPRITES/AUDITORIA-PHAGE-GO.md`. Sus líneas corresponden a la versión anterior.
+## Estado actual de la aplicación
+
+Este informe conserva la instantánea de auditoría tomada antes de la versión publicada 2026.10.20-52. Sus cifras de pruebas, inventario de WebP y frases de publicación describen aquel corte, no el estado vigente. Desde entonces, la versión actual tiene 119 pruebas automatizadas, 84 WebP revisados por el comprobador de recursos y 40 campos alfa/SDF; la CI y la publicación de GitHub Pages están completas. El juego publicado está en [GitHub Pages](https://maxdesigna7x.github.io/Phage_Go_Game/) y su guía actual está en [docs/estado-actual.md](estado-actual.md).
+
+Revisión del 20 de octubre de 2026 sobre el código de trabajo de Phage-Go!, comparado con `794a94a9eecc686cca1566515c31196a2b871d0c`. Sus hallazgos corresponden a la versión anterior.
 
 Antes de editar, las 76 pruebas originales pasaban y las sondas entregadas reprodujeron sus observaciones. El árbol local solo tenía cambios de permisos en archivos existentes; se conservaron. El informe acierta en los fallos de lógica. Sus estimaciones de memoria y propuestas de rendimiento no equivalen a mediciones de GPU, FPS o latencia de un teléfono.
 
@@ -30,14 +34,14 @@ Antes de editar, las 76 pruebas originales pasaban y las sondas entregadas repro
 
 | ID | Decisión |
 | --- | --- |
-| O01 | Aplicación parcial con evidencia: se retiran del manifiesto `phage` y `bubble`, sin referencias de dibujo; el fago usa `phageSprite` y las burbujas un raster generado. Se conservan los archivos. Inventario actual: 76 WebP, 107,94 MiB RGBA estimados, sin contar superficies auxiliares ni audio. Carga por fases y reducción de resolución se posponen hasta medir inicio y memoria en hardware. No se cambian lienzos ni tamaño de recursos. |
+| O01 | Aplicación parcial con evidencia: se retiran del manifiesto `phage` y `bubble`, sin referencias de dibujo; el fago usa `phageSprite` y las burbujas un raster generado. Se conservan los archivos. En esta instantánea el inventario era de 76 WebP y 107,94 MiB RGBA estimados, sin contar superficies auxiliares ni audio; la comprobación actual registra 84 WebP. Carga por fases y reducción de resolución se posponen hasta medir inicio y memoria en hardware. No se cambian lienzos ni tamaño de recursos. |
 | O02 | Mantener el único canvas reutilizado de mezcla. No hay medición que justifique un atlas precalculado, más superficies o cuantizar la animación. Las hojas nuevas tampoco están listas para sustituirlo. |
 | O03 | Aplicación pequeña: las consultas de rumbo que solo deben evitar el objetivo anclado consultan directamente `targetBacteria`; no reconstruyen/recorren todos los cuerpos para filtrarlos. Se mantienen sondas locales y superficies independientes; reutilizarlas globalmente sin perfilado puede introducir errores por aliasing. |
 | O04 | Pospuesto: no se demostró un cuello de botella con la vecindad actual. Dormir cuerpos o cambiar pares de contacto exige medir y probar propagación de empujes; no se cambia la física por una sospecha. |
 | O05 | Pospuesto: se mantienen las cachés y generador existentes. Cachear también casillas de burbujas, reducir densidad o migrar a WebGL requiere medir el render primero. |
 | O06 | Evita reasignar dimensiones iguales del backbuffer y mide insets solo en resize, no en cada render. Se conserva la altura lógica de 900. No se añade DPR completo, calidad adaptativa o cachés de transformaciones sin medir legibilidad y coste. |
 | O07 | Se conservan límites: 220 partículas, cuatro variantes de halo por asset, mundo por vecindad y un solo canvas de mezcla. Las tres máscaras nuevas se limitan a 384 px. La cola de audio queda acotada por grupos del catálogo. Compartir buffers de pops y presupuestos por bytes queda pendiente de un perfil; no se afirma una meseta de memoria medida. |
-| O08 | Aplicado: revisión explícita en las URL de todos los WebP cargados por JS e iconos HTML; versiones coherentes de archivos modificados. `scripts/check_assets.py` verifica rutas, WebP, alfa, dimensiones compartidas, límite de células, metadatos SDF y versiones. Dependencias Python fijadas y workflow Node 22/Python 3.12 con pruebas y regeneración idéntica de SDF. El workflow está preparado; no se ha ejecutado remotamente ni se ha publicado. |
+| O08 | Aplicado: revisión explícita en las URL de todos los WebP cargados por JS e iconos HTML; versiones coherentes de archivos modificados. `scripts/check_assets.py` verifica rutas, WebP, alfa, dimensiones compartidas, límite de células, metadatos SDF y versiones. Dependencias Python fijadas y workflow Node 22/Python 3.12 con pruebas y regeneración idéntica de SDF. En el corte de esta auditoría aún no se había ejecutado remotamente ni publicado; después, la CI pasó y GitHub Pages publicó las versiones 2026.10.20-52 y 2026.10.20-53. |
 | O09 | Extracción gradual limitada a controles semánticos en `controls.js`. Se mantienen scripts clásicos, orden explícito y harness VM actualizado. No se justifica migrar todo a módulos ES/framework ni mezclar una reescritura general con estos arreglos. |
 
 ## Hojas de animación recibidas
@@ -50,10 +54,10 @@ La especificación de bucle 8–12 FPS, cierre y deglución es razonable para un
 
 ## Validación y límites
 
-- Suite Node: 97 pruebas, incluidas regresiones temporales, punteros, mundo, carga, UI y audio; todas pasan.
+- En el corte de esta auditoría, la suite Node tenía 97 pruebas de regresiones temporales, punteros, mundo, carga, UI y audio; todas pasaban. La suite actual tiene 119 pruebas.
 - Chrome real de escritorio y móvil emulado: pruebas de aparición exclusiva en difícil, advertencia, escape, captura, regreso por toque/ratón y automático, empujes y ausencia de errores JS/404 en carga normal.
 - Prueba adicional Chrome: ciclo mediante controles nativos por teclado, selector de movimiento, Game Over, bloqueo de inicio prematuro, recurso decorativo fallido, reintento de esencial, un solo bucle, fullscreen rechazado y eventos de dos toques independientes.
-- Verificación gráfica: 76 rutas WebP y 40 formas alfa/SDF válidas. Regenerar `world-shapes.js` mantiene SHA-256 `c977a6b81fe10c26fc56ecf8e9c8502fdc7dbcc006d21f8a1b51b0bea5cf913f`.
+- Verificación gráfica en el corte: 76 rutas WebP y 40 formas alfa/SDF válidas. La comprobación actual registra 84 WebP y 40 formas. Regenerar `world-shapes.js` mantiene SHA-256 `c977a6b81fe10c26fc56ecf8e9c8502fdc7dbcc006d21f8a1b51b0bea5cf913f`.
 - Las capturas de pruebas se guardan localmente en `tmp/audit-browser/` y `tmp/browser-audit/`. Se revisaron halo de amenaza, Game Over, ensamblaje y foco del teclado. No son mediciones de rendimiento.
 - Quedan pruebas de hardware: pantalla recortada real, WebKit/Safari, gestos fullscreen, lector de pantalla y perfil de CPU/GPU/memoria/latencia en un móvil objetivo. Se conservan como límites de validación; no se atribuyen porcentajes de mejora ni FPS no medidos.
 

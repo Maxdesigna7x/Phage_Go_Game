@@ -2,6 +2,8 @@
 
 Juego táctil sobre el ciclo lítico de un bacteriófago. No necesita instalar dependencias.
 
+La referencia de jugabilidad vigente, incluidos los cinco minijuegos de nucleótidos y su orden por infección, está en [docs/estado-actual.md](docs/estado-actual.md).
+
 ```bash
 python3 -m http.server 8873
 ```
@@ -18,7 +20,7 @@ Basta acercarse a una bacteria compatible y pulsar **Adherirse**. El fago se col
 
 En ordenador: flechas o WASD y Espacio. La tarjeta «Mover» alterna movimiento simple y rotación con propulsión.
 
-Con teclado, Tab recorre los controles y Enter o Espacio activa el control enfocado. En ADN, selecciona una copia; en nucleótidos, selecciona primero la letra y luego su destino. Para ensamblar, selecciona la pieza y después la pieza de destino. El foco se marca en amarillo. Mantener Enter o Espacio sobre el control de inyección transfiere ADN; en lisis, pulsa varias veces. Escape vuelve al menú.
+Con teclado, Tab recorre los controles y Enter o Espacio activa el control enfocado. En ADN, selecciona una copia; en nucleótidos, las teclas A/T/C/G responden a los juegos de pulsar y memoria, 1–4 intercambian fichas en ordenar, las flechas o A/D mueven la cesta en atrapar y Tab permite elegir fichas o destinos en los juegos restantes. El foco de teclado se marca en amarillo. Mantener Enter o Espacio sobre el control de inyección transfiere ADN; en lisis, pulsa varias veces. Escape vuelve al menú.
 
 Los modos se habilitan cuando termina la carga. Un recurso esencial que falle muestra **Reintentar**; las decoraciones y fuentes tienen alternativas para permitir jugar.
 
@@ -26,7 +28,8 @@ Los modos se habilitan cuando termina la carga. Un recurso esencial que falle mu
 
 Cada partida genera una semilla aleatoria nueva para el mundo y el fondo. La semilla se mantiene al explorar, volver a una zona y completar ciclos de infección.
 
-- Duplica el ADN y coloca cada nucleótido sobre su misma letra: A sobre A, T sobre T, C sobre C y G sobre G.
+- Duplica el ADN hasta cinco copias. Cada copia activa uno de los cinco minijuegos de nucleótidos: aparecen todos en un orden aleatorio por bacteria.
+- Completa la secuencia arrastrando, pulsa las letras pedidas de una en una, ordena las cuatro fichas, atrapa las bases que caen o memoriza y repite el patrón. La descripción de controles está en [docs/minijuegos-nucleotidos.md](docs/minijuegos-nucleotidos.md).
 - La maquinaria bacteriana fabrica las piezas. Guarda el ADN en la cabeza y ensambla cabeza, cola y fibras.
 - Completa la lisis con diez pulsaciones o toques en cualquier parte de la pantalla. La barra no retrocede. La destrucción recorre todos los assets intermedios y la explosión final; una transición breve evita saltárselos al pulsar muy rápido.
 - La bacteria se acerca y gira suavemente al entrar. La inyección y los minijuegos comparten el mismo asset interior, escala y centro.

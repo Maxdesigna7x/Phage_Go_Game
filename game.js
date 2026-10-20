@@ -19,7 +19,7 @@ const storyIntroCaption = document.getElementById("storyIntroCaption");
 const displayNotice = document.getElementById("displayNotice");
 const retryLoadingButton = document.getElementById("retryLoadingButton");
 const loadingStatus = document.getElementById("loadingStatus");
-const BUILD_VERSION = "20261020-52";
+const BUILD_VERSION = "20261020-53";
 const STORY_INTRO_FADE_MS = 260;
 const SIMULATION_STEP = 1 / 60;
 const MAX_FRAME_SECONDS = 0.25; // Discard long stalls equally for gameplay and its clocks.
@@ -776,6 +776,10 @@ function updateWorldCells(dt) {
 function setState(next) {
   invalidateUi();
   cancelGenericPointer();
+  if (next !== State.NUCLEOTIDE_MINIGAME && nucleotideGame?.type === "catch") {
+    nucleotideGame.catchPointerId = null;
+    nucleotideGame.catchPointerLastX = null;
+  }
   if (next === State.INJECTION && targetBacteria) infectionView = { camera: { ...camera }, rotation: targetBacteria.rotation };
   const previous = state;
   if (![State.SEARCH, State.ADSORPTION, State.INJECTION].includes(next)) infectionPointer = null;
@@ -1146,7 +1150,8 @@ function createNucleotideGame(dna) {
     fallSpawnCount: 0,
     fallElapsed: 0,
     basketX: safeCenterX(),
-    pointerX: null,
+    catchPointerId: null,
+    catchPointerLastX: null,
     message: "",
     messageTimer: 0,
   };
@@ -1339,8 +1344,6 @@ function updateCatchNucleotideGame(dt) {
   const direction = (keys.has("ArrowRight") || keys.has("d") ? 1 : 0) - (keys.has("ArrowLeft") || keys.has("a") ? 1 : 0);
   if (direction) {
     nucleotideGame.basketX += direction * 470 * dt;
-  } else if (nucleotideGame.pointerX !== null) {
-    nucleotideGame.basketX = lerp(nucleotideGame.basketX, nucleotideGame.pointerX, Math.min(1, dt * 12));
   }
   nucleotideGame.basketX = clamp(nucleotideGame.basketX, left + 48, right - 48);
 
@@ -3540,6 +3543,10 @@ function clearHeldInputs() {
   keys.clear();
   semanticActionKey = null;
   resetTouchControls();
+  if (nucleotideGame?.type === "catch") {
+    nucleotideGame.catchPointerId = null;
+    nucleotideGame.catchPointerLastX = null;
+  }
   pendingActionTaps = 0;
   spaceWasDown = false;
   cancelGenericPointer();
@@ -3557,6 +3564,13 @@ function cancelGenericPointer(pointerId = mouse.pointerId) {
     dragItem.dragging = false;
     dragItem = null;
   }
+}
+
+function releaseCatchSliderPointer(pointerId) {
+  if (nucleotideGame?.type !== "catch" || nucleotideGame.catchPointerId !== pointerId) return false;
+  nucleotideGame.catchPointerId = null;
+  nucleotideGame.catchPointerLastX = null;
+  return true;
 }
 
 // Pointer interaction uses the same precomputed silhouette as world collisions.
@@ -3768,7 +3782,15 @@ window.addEventListener("keyup", ev => {
 canvas.addEventListener("pointerdown", ev => {
   if (!gameReady || isDisplayBlocked() || soundEffects.menuOpen || storyIntroActive) return;
   const p = screenToCanvas(ev);
-  if (state === State.NUCLEOTIDE_MINIGAME && nucleotideGame?.type === "catch") nucleotideGame.pointerX = p.x;
+  if (state === State.NUCLEOTIDE_MINIGAME && nucleotideGame?.type === "catch") {
+    if (nucleotideGame.catchPointerId === null) {
+      nucleotideGame.catchPointerId = ev.pointerId;
+      nucleotideGame.catchPointerLastX = p.x;
+      canvas.setPointerCapture(ev.pointerId);
+    }
+    ev.preventDefault();
+    return;
+  }
   if (state === State.LYSIS) {
     if (!lysis.burst) pendingActionTaps++;
     canvas.setPointerCapture(ev.pointerId);
@@ -3792,7 +3814,18 @@ canvas.addEventListener("pointerdown", ev => {
 
 canvas.addEventListener("pointermove", ev => {
   const p = screenToCanvas(ev);
-  if (state === State.NUCLEOTIDE_MINIGAME && nucleotideGame?.type === "catch") nucleotideGame.pointerX = p.x;
+  if (state === State.NUCLEOTIDE_MINIGAME && nucleotideGame?.type === "catch") {
+    if (nucleotideGame.catchPointerId !== ev.pointerId) return;
+    const layout = getNucleotideLayout();
+    nucleotideGame.basketX = clamp(
+      nucleotideGame.basketX + p.x - nucleotideGame.catchPointerLastX,
+      layout.fallLeft + 48,
+      layout.fallRight - 48,
+    );
+    nucleotideGame.catchPointerLastX = p.x;
+    ev.preventDefault();
+    return;
+  }
   if (infectionPointer?.id === ev.pointerId) {
     infectionPointer.x = p.x; infectionPointer.y = p.y;
     if (!infectionPointerHeld()) infectionPointer.elapsed = 0;
@@ -3810,6 +3843,7 @@ canvas.addEventListener("pointermove", ev => {
 });
 
 canvas.addEventListener("pointerup", ev => {
+  if (releaseCatchSliderPointer(ev.pointerId)) { ev.preventDefault(); return; }
   if (releaseControlPointer(ev.pointerId)) return;
   if (mouse.pointerId !== ev.pointerId) return;
   const p = screenToCanvas(ev);
@@ -3821,10 +3855,12 @@ canvas.addEventListener("pointerup", ev => {
 });
 
 canvas.addEventListener("pointercancel", ev => {
+  if (releaseCatchSliderPointer(ev.pointerId)) return;
   if (releaseControlPointer(ev.pointerId)) return;
   cancelGenericPointer(ev.pointerId);
 });
 canvas.addEventListener("lostpointercapture", ev => {
+  if (releaseCatchSliderPointer(ev.pointerId)) return;
   if (!releaseControlPointer(ev.pointerId)) cancelGenericPointer(ev.pointerId);
 });
 

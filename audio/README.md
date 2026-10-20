@@ -1,6 +1,6 @@
 # Efectos del juego
 
-`catalog.js` enumera los 58 efectos generados disponibles en `sonidos/web/`. No incluye `ambiente_menu`, `ambiente_exterior` ni `ambiente_interior`: el juego no carga música ni ambientes de fondo.
+`catalog.js` enumera los 58 efectos activos disponibles en `sonidos/web/`, en su mayoría generados localmente. Las explosiones de burbujas reutilizan una grabación CC0 importada; su procedencia está en [sonidos/fuentes/CREDITOS.md](sonidos/fuentes/CREDITOS.md). El catálogo no incluye `ambiente_menu`, `ambiente_exterior` ni `ambiente_interior`: el juego no carga música ni ambientes de fondo.
 
 Para cada efecto, las rutas se ordenan por tamaño real. Se usa el archivo comprimido más pequeño que el navegador pueda reproducir; si la decodificación falla, se intenta el siguiente formato. Predomina MP3; para biosíntesis el OGG es menor. La suma de las opciones preferidas es 308.458 bytes (unos 301 KiB). Los WAV de `originales/` y el generador no se cargan en el juego.
 

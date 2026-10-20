@@ -34,7 +34,7 @@ La captura guarda la última pose del fago, lo contrae hacia la copa y presenta 
 
 ## Verificación
 
-- 103 pruebas automatizadas de juego y sonido: modos, aparición segura y limitada, detección, pérdida del objetivo, aviso, esquiva, captura sostenida, roces inocuos, pausa, protección durante cada fase, Game Over y regreso al menú; además de las regresiones existentes del ciclo lítico, controles y sonido.
+- La suite global actual tiene 119 pruebas de juego y sonido. Incluye cobertura del macrófago para modos, aparición segura y limitada, detección, pérdida del objetivo, aviso, esquiva, captura sostenida, roces inocuos, pausa, protección durante cada fase, Game Over y regreso al menú, además de las regresiones del ciclo lítico, controles y sonido.
 - Apariciones completamente exteriores en proporciones de escritorio, tablet y móvil, con cámara desplazada, zoom y rotaciones; espera si no hay sitio exterior libre. Aviso periférico en cuatro direcciones y diagonal, intensidad por cercanía y suspensión por protección/estado/modo.
 - Empujes de plaquetas, células grandes y bacterias sanas/rotas a velocidades de patrulla y persecución; transmisión entre cuerpos; objetivo anclado; conservación de posiciones al regenerar la vecindad y al finalizar un ciclo.
 - Navegador Chromium con imágenes y fuentes reales en escritorio 1440×900 y móvil táctil 844×390. Prueba de fácil sin enemigos, aparición en difícil, aviso, escape mediante arrastre táctil, captura, vuelta al menú por botón y automática, y empuje de una bacteria. Comprobación de errores JavaScript y recursos HTTP.
