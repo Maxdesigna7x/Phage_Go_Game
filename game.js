@@ -19,7 +19,7 @@ const storyIntroCaption = document.getElementById("storyIntroCaption");
 const displayNotice = document.getElementById("displayNotice");
 const retryLoadingButton = document.getElementById("retryLoadingButton");
 const loadingStatus = document.getElementById("loadingStatus");
-const BUILD_VERSION = "20261020-36";
+const BUILD_VERSION = "20261020-37";
 const STORY_INTRO_FADE_MS = 260;
 const SIMULATION_STEP = 1 / 60;
 const MAX_FRAME_SECONDS = 0.25; // Discard long stalls equally for gameplay and its clocks.
@@ -115,6 +115,7 @@ const ASSETS = {
   storyIntro1: "assets_webp/storys/wide/0.webp",
   storyIntro2: "assets_webp/storys/wide/2.webp",
   storyIntro3: "assets_webp/storys/wide/5.webp",
+  storyIntroMacrophage: "assets_webp/storys/wide/7.webp",
   introBack: "assets_webp/Intro_back_V2.webp",
   macrofago_idle: "assets_webp/macrofago/macrofago_idle.webp",
   macrofago_reach: "assets_webp/macrofago/macrofago_reach.webp",
@@ -262,6 +263,18 @@ canvas.height = H;
 
 const OPTIONAL_ASSETS = new Set(['introBack', 'title', 'easyIcon', 'hardIcon', 'flare', 'noise', 'story', ...Array.from({length:8}, (_,i)=>`bg${i+1}`)]);
 const STORY_INTRO_ASSETS = [ASSETS.storyIntro1, ASSETS.storyIntro2, ASSETS.storyIntro3];
+const HARD_STORY_INTRO_ASSETS = [...STORY_INTRO_ASSETS, ASSETS.storyIntroMacrophage];
+let activeStoryIntroAssets = STORY_INTRO_ASSETS;
+const STORY_INTRO_CAPTIONS = [
+  "Infecta una bacteria con tu fago.",
+  "Replica su ADN y ensambla nuevos fagos.",
+  "Libéralos cuando la bacteria se rompa.",
+];
+const STORY_INTRO_ALT_TEXTS = [
+  "Un fago se acerca a una bacteria",
+  "Los fagos se multiplican dentro de la bacteria",
+  "La bacteria se rompe y libera nuevos fagos",
+];
 function loadImage(src) {
   return new Promise((resolve, reject) => {
     const image = new Image();
@@ -332,11 +345,12 @@ function init() {
 
 function startStoryIntro(mode) {
   pendingGameMode = mode;
+  activeStoryIntroAssets = mode === GameMode.HARD ? HARD_STORY_INTRO_ASSETS : STORY_INTRO_ASSETS;
   storyIntroIndex = 0;
   storyIntroTransitioning = false;
   storyIntroActive = true;
   storyIntroImage.classList.remove("is-fading");
-  storyIntroImage.src = `${STORY_INTRO_ASSETS[storyIntroIndex]}?v=${BUILD_VERSION}`;
+  storyIntroImage.src = `${activeStoryIntroAssets[storyIntroIndex]}?v=${BUILD_VERSION}`;
   updateStoryIntroControls();
   menuButtons.classList.add("hidden");
   playfield.inert = true;
@@ -346,18 +360,14 @@ function startStoryIntro(mode) {
 }
 
 function updateStoryIntroControls() {
-  const finalScene = storyIntroIndex === STORY_INTRO_ASSETS.length - 1;
-  storyIntroCaption.textContent = [
-    "Infecta una bacteria con tu fago.",
-    "Replica su ADN y ensambla nuevos fagos.",
-    "Libéralos cuando la bacteria se rompa.",
-  ][storyIntroIndex];
+  const finalScene = storyIntroIndex === activeStoryIntroAssets.length - 1;
+  storyIntroCaption.textContent = storyIntroIndex < STORY_INTRO_CAPTIONS.length
+    ? STORY_INTRO_CAPTIONS[storyIntroIndex]
+    : "En difícil, evita al macrófago.";
   storyIntroNext.setAttribute("aria-label", finalScene ? "Iniciar partida" : "Avanzar a la siguiente escena");
-  storyIntroImage.alt = [
-    "Un fago se acerca a una bacteria",
-    "Los fagos se multiplican dentro de la bacteria",
-    "La bacteria se rompe y libera nuevos fagos",
-  ][storyIntroIndex];
+  storyIntroImage.alt = storyIntroIndex < STORY_INTRO_ALT_TEXTS.length
+    ? STORY_INTRO_ALT_TEXTS[storyIntroIndex]
+    : "Un macrófago persigue a un fago.";
 }
 
 function advanceStoryIntro() {
@@ -365,7 +375,7 @@ function advanceStoryIntro() {
   storyIntroTransitioning = true;
   storyIntroImage.classList.add("is-fading");
   setTimeout(() => {
-    if (storyIntroIndex + 1 >= STORY_INTRO_ASSETS.length) {
+    if (storyIntroIndex + 1 >= activeStoryIntroAssets.length) {
       storyIntro.classList.add("is-leaving");
       setTimeout(() => {
         storyIntro.classList.add("hidden");
@@ -384,7 +394,7 @@ function advanceStoryIntro() {
       return;
     }
     storyIntroIndex++;
-    storyIntroImage.src = `${STORY_INTRO_ASSETS[storyIntroIndex]}?v=${BUILD_VERSION}`;
+    storyIntroImage.src = `${activeStoryIntroAssets[storyIntroIndex]}?v=${BUILD_VERSION}`;
     updateStoryIntroControls();
     requestAnimationFrame(() => {
       storyIntroImage.classList.remove("is-fading");
