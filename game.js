@@ -19,7 +19,7 @@ const storyIntroCaption = document.getElementById("storyIntroCaption");
 const displayNotice = document.getElementById("displayNotice");
 const retryLoadingButton = document.getElementById("retryLoadingButton");
 const loadingStatus = document.getElementById("loadingStatus");
-const BUILD_VERSION = "20261020-37";
+const BUILD_VERSION = "20261020-39";
 const STORY_INTRO_FADE_MS = 260;
 const SIMULATION_STEP = 1 / 60;
 const MAX_FRAME_SECONDS = 0.25; // Discard long stalls equally for gameplay and its clocks.
@@ -373,26 +373,30 @@ function updateStoryIntroControls() {
 function advanceStoryIntro() {
   if (!storyIntroActive || storyIntroTransitioning) return;
   storyIntroTransitioning = true;
+  const finalScene = storyIntroIndex + 1 >= activeStoryIntroAssets.length;
+  if (finalScene) {
+    const mode = pendingGameMode;
+    pendingGameMode = null;
+    if (mode) {
+      // Start and paint the first real game frame beneath the final illustration.
+      launchGame(mode);
+      render(0);
+    } else {
+      menuButtons.classList.remove("hidden");
+      normalButton.focus({ preventScroll: true });
+    }
+    playfield.inert = false;
+    storyIntro.classList.add("is-leaving");
+    setTimeout(() => {
+      storyIntro.classList.add("hidden");
+      storyIntro.classList.remove("is-visible", "is-leaving");
+      storyIntroActive = false;
+      storyIntroTransitioning = false;
+    }, STORY_INTRO_FADE_MS);
+    return;
+  }
   storyIntroImage.classList.add("is-fading");
   setTimeout(() => {
-    if (storyIntroIndex + 1 >= activeStoryIntroAssets.length) {
-      storyIntro.classList.add("is-leaving");
-      setTimeout(() => {
-        storyIntro.classList.add("hidden");
-        storyIntro.classList.remove("is-visible", "is-leaving");
-        storyIntroActive = false;
-        storyIntroTransitioning = false;
-        playfield.inert = false;
-        const mode = pendingGameMode;
-        pendingGameMode = null;
-        if (mode) launchGame(mode);
-        else {
-          menuButtons.classList.remove("hidden");
-          normalButton.focus({ preventScroll: true });
-        }
-      }, STORY_INTRO_FADE_MS);
-      return;
-    }
     storyIntroIndex++;
     storyIntroImage.src = `${activeStoryIntroAssets[storyIntroIndex]}?v=${BUILD_VERSION}`;
     updateStoryIntroControls();
@@ -3147,7 +3151,7 @@ function readTutorialProgress() {
     return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   } catch { return {}; }
 }
-const visualTutorial = { learned: readTutorialProgress(), key: null, age: 0, movementTime: 0 };
+const visualTutorial = { learned: readTutorialProgress(), key: null, age: 0, movementInputSeen: false };
 function learnTutorial(key) {
   if (visualTutorial.learned[key] === true) return;
   visualTutorial.learned[key] = true;
@@ -3158,8 +3162,10 @@ function getTutorialCue() {
   const tap = (key, p, hold = false) => ({ key, source: p, target: p, hold });
   let cue = null;
   if (state === State.SEARCH) {
-    if (attachCandidate) cue = tap('infection', worldToScreen(attachCandidate.x, attachCandidate.y), true);
-    else cue = { key: 'movement', movement: true, source: { x: safeCenterX()+Math.min(190, W*.14), y: H*.63 } };
+    // Show a full movement demonstration before offering a nearby infection target.
+    if (visualTutorial.learned['movement-v2'] !== true) cue = { key: 'movement-v2', movement: true, source: { x: safeCenterX()+Math.min(190, W*.14), y: H*.63 } };
+    else if (attachCandidate) cue = tap('infection', worldToScreen(attachCandidate.x, attachCandidate.y), true);
+    else cue = null;
   } else if ([State.ADSORPTION, State.INJECTION].includes(state) && targetBacteria) {
     cue = tap('injection', infectionScreenEntity(targetBacteria), true);
   } else if (state === State.DNA_REPLICATION) {
@@ -3187,20 +3193,24 @@ function getTutorialCue() {
 }
 
 function updateVisualTutorial(dt) {
-  if (state === State.SEARCH && !visualTutorial.learned.movement) {
+  const cue = getTutorialCue();
+  if (state === State.SEARCH && cue?.key === 'movement-v2') {
     const movement = getMovementInput();
     const moving = movement.mobileActive || movement.simpleActive || movement.left || movement.right || movement.up || movement.down;
-    visualTutorial.movementTime = moving ? visualTutorial.movementTime+dt : 0;
-    if (visualTutorial.movementTime >= 0.8) learnTutorial('movement');
+    if (moving) visualTutorial.movementInputSeen = true;
+    const shownFor = cue.key === visualTutorial.key ? visualTutorial.age + dt : dt;
+    // A touch can control the ship while the hand remains visible; only complete
+    // the lesson after the player has seen all four directions and moved once.
+    if (visualTutorial.movementInputSeen && shownFor >= 6.4) learnTutorial('movement-v2');
   }
-  const cue = getTutorialCue();
-  if (cue?.key !== visualTutorial.key) { visualTutorial.key = cue?.key || null; visualTutorial.age = 0; }
+  const nextCue = getTutorialCue();
+  if (nextCue?.key !== visualTutorial.key) { visualTutorial.key = nextCue?.key || null; visualTutorial.age = 0; }
   else visualTutorial.age += dt;
 }
 
 function drawVisualTutorial() {
   const cue = getTutorialCue();
-  if (!cue || dragItem || mouse.down || touchControls.joystick.active || infectionPointerHeld()) return;
+  if (!cue || dragItem || mouse.down || infectionPointerHeld()) return;
   const age = visualTutorial.age;
   let p = cue.source, pressed = false, alpha = 1;
   if (cue.movement) {

@@ -9,7 +9,7 @@ function game(effects, storage) {
   const gradient = { addColorStop() {} };
   const context = new Proxy({}, { get: (o, k) => o[k] ?? (k.startsWith('create') ? () => gradient : k === 'getTransform' ? () => ({a:1,b:0,c:0,d:1,e:0,f:0}) : k === 'measureText' ? text => ({ width: text.length * 12 }) : () => {}), set: (o,k,v) => (o[k] = v, true) });
   function node(id) {
-    return nodes[id] ||= { style: {}, dataset: {}, children: [], append(child) { this.children.push(child); child.parent=this; }, remove() { if(this.parent) this.parent.children=this.parent.children.filter(n=>n!==this); }, setAttribute(name,value) { this[name]=value; }, classList: { add() {}, remove() {}, toggle() {} }, addEventListener(event, handler) { listeners[id + ':' + event] = handler; }, getContext: () => context, getBoundingClientRect() { const field = nodes.playfield.style; return { left: parseFloat(field.left) || 0, top: parseFloat(field.top) || 0, width: parseFloat(this.style.width) || 1600, height: parseFloat(this.style.height) || 900 }; }, setPointerCapture() {} };
+    return nodes[id] ||= { style: { setProperty(name,value) { this[name]=value; } }, dataset: {}, children: [], append(child) { this.children.push(child); child.parent=this; }, remove() { if(this.parent) this.parent.children=this.parent.children.filter(n=>n!==this); }, setAttribute(name,value) { this[name]=value; }, classList: { add() {}, remove() {}, toggle() {} }, addEventListener(event, handler) { listeners[id + ':' + event] = handler; }, getContext: () => context, getBoundingClientRect() { const field = nodes.playfield.style; return { left: parseFloat(field.left) || 0, top: parseFloat(field.top) || 0, width: parseFloat(this.style.width) || 1600, height: parseFloat(this.style.height) || 900 }; }, setPointerCapture() {} };
   }
   const sandbox = { console, performance: { now: () => sandbox.now }, now: 1000, document: { hidden: false, getElementById: node, createElement: () => node('cache' + Math.random()), addEventListener(event, handler) { listeners['document:' + event] = handler; } }, window: { innerWidth: 1280, innerHeight: 720, matchMedia: () => ({ matches: false }), addEventListener(event, handler) { listeners['window:' + event] = handler; } }, navigator: { maxTouchPoints: 0, userAgent: '' }, requestAnimationFrame() {}, setTimeout: () => 1, clearTimeout() {} };
   if (effects) sandbox.window.SFX=effects;
@@ -24,7 +24,7 @@ function game(effects, storage) {
   source = source.slice(0, source.lastIndexOf('\nresizeCanvasToViewport();'));
   vm.runInContext(source, sandbox);
   const run = code => vm.runInContext(code, sandbox);
-  run('for (const key of Object.keys(ASSETS)) img[key] = {width:512, height:512}; resizeCanvasToViewport(); init();');
+  run('for (const key of Object.keys(ASSETS)) img[key] = {width:512, height:512}; resizeCanvasToViewport(); init(); startGame=mode=>{if(gameReady && !isDisplayBlocked()) launchGame(mode);};');
   return { run, nodes, listeners, sandbox };
 }
 
@@ -1600,5 +1600,37 @@ test('one success hides each repeated-element lesson and assembly advances to th
     const genome=assembly.activeParts.find(p=>p.kind==='genome'),head=assembly.activeParts.find(p=>p.kind==='head');
     genome.x=head.x;genome.y=head.y;trySnapParts();
     return getTutorialCue().key==='assembly-head'&&visualTutorial.learned['assembly-genome'];
+  })()`),true);
+});
+
+
+test('mobile always sees the first movement demonstration before a nearby infection cue', () => {
+  const {run}=game();
+  assert.equal(run(`(()=>{
+    mobileControls=true;launchGame(GameMode.NORMAL);
+    attachCandidate=makeBacteria(player.x+80,player.y,1,0,1);
+    visualTutorial.learned.movement=true; // Simulate the old mobile save that hid the unseen lesson.
+    visualTutorial.learned['movement-v2']=undefined;
+    touchControls.joystick.active=true;touchControls.joystick.dx=38;touchControls.joystick.dy=0;
+    const cue=getTutorialCue();let drawn=0;ctx.drawImage=()=>drawn++;
+    if(cue?.key!=='movement-v2')return false;
+    for(let i=0;i<390;i++){updateVisualTutorial(1/60);drawVisualTutorial();}
+    if(drawn===0||!visualTutorial.learned['movement-v2'])return false;
+    return getTutorialCue()?.key==='infection';
+  })()`),true);
+});
+
+test('the final story image fades over a rendered first gameplay frame', () => {
+  const {run}=game();
+  assert.equal(run(`(()=>{
+    const events=[];
+    storyIntroActive=true;storyIntroTransitioning=false;storyIntroIndex=STORY_INTRO_ASSETS.length-1;
+    activeStoryIntroAssets=STORY_INTRO_ASSETS;pendingGameMode=GameMode.NORMAL;
+    storyIntro.classList={add(...xs){events.push(...xs.map(x=>'add:'+x));},remove(...xs){events.push(...xs.map(x=>'remove:'+x));}};
+    setTimeout=callback=>{events.push('timer');callback();return 1;};
+    render=()=>events.push('render-game');launchGame=()=>{state=State.SEARCH;events.push('launch-game');};
+    advanceStoryIntro();
+    const renderIndex=events.indexOf('render-game'), leavingIndex=events.indexOf('add:is-leaving'), hiddenIndex=events.indexOf('add:hidden');
+    return renderIndex>=0&&renderIndex<leavingIndex&&leavingIndex<hiddenIndex&&!storyIntroActive;
   })()`),true);
 });

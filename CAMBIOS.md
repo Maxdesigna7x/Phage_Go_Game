@@ -25,3 +25,10 @@ Publicación: GitHub Pages desde `main` en https://maxdesigna7x.github.io/Phage_
 - Verificación: 108 pruebas, revisión visual y recorrido en navegador desde pulsación sobre bacteria hasta ADN, sin errores de consola.
 
 Detalle y lista de cambios: [docs/tutorial-visual.md](docs/tutorial-visual.md).
+
+
+# Corrección de tutorial móvil y salida de presentación — 20 de octubre de 2026
+
+- La demostración de movimiento tiene prioridad aunque haya una bacteria cercana; en móvil sigue visible con el joystick en uso y el guardado anterior no la oculta.
+- La última imagen de presentación se desvanece sobre la partida ya renderizada.
+- Unificación de la versión de caché de la página.

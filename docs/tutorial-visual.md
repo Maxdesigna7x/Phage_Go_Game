@@ -13,7 +13,7 @@ Cambios solicitados (2026-10-20):
 - [x] Recordar cada acción aprendida entre partidas y recargas; no repetir ayudas para los elementos restantes. Una acción pendiente puede retomarse tras abandonar una partida.
 - [x] Conservar controles de teclado y accesibilidad, pausar/cancelar entradas correctamente, actualizar versión y verificar con pruebas y revisión visual.
 
-Las ayudas son una capa de dibujo: no generan eventos, no arrastran objetos, no avanzan el juego y no bloquean los controles. La fabricación automática no requiere un gesto. El progreso local se almacena con la clave `phage-go-tutorial-v1`; si el navegador impide guardarlo, se conserva durante la sesión.
+Las ayudas son una capa de dibujo: no generan eventos, no arrastran objetos, no avanzan el juego y no bloquean los controles. La fabricación automática no requiere un gesto. El progreso local se almacena con la clave `phage-go-tutorial-v1`; si el navegador impide guardarlo, se conserva durante la sesión. La lección de movimiento usa el identificador `movement-v2` para volver a mostrarla a quienes una versión anterior ocultó al mover el dedo.
 
 ## Verificación
 
@@ -23,3 +23,10 @@ Las ayudas son una capa de dibujo: no generan eventos, no arrastran objetos, no 
 - Se conserva ESPACIO y el control semántico de teclado sobre la bacteria, sin dibujar el antiguo botón. Ratón y toque comparten el gesto de mantener; el arrastre de movimiento también funciona con ratón.
 - La infección necesita 0,65 segundos continuos antes del acople. Salir de la silueta reinicia ese tiempo; durante inyección se pausa el avance al dejar de pulsar dentro de la bacteria. Cancelación, pérdida de captura, pausa, menú y fin de interacción liberan el dedo.
 - Versión de `game.js` y referencias de scripts actualizadas a `20261020-31`.
+
+
+## Correcciones de visibilidad
+
+- El tutorial de movimiento tiene prioridad sobre la infección cercana. En móvil no se oculta al tocar el joystick. Se marca aprendido solo después de que el jugador haya visto el ciclo de cuatro direcciones completo y haya movido el fago; el identificador v2 hace que aparezca incluso a usuarios cuyo guardado anterior la marcó accidentalmente como vista.
+- La última ilustración ahora se desvanece mientras la partida ya corre detrás. El primer fotograma del juego se dibuja antes de quitar la capa de presentación.
+- Todos los recursos de `index.html` usan la versión de caché `20261020-39`.
