@@ -19,7 +19,7 @@ function invalidateUi() {
 
 function announceGameState(message) {
   const endings = {[State.INTRO]:'Elige un modo de juego.', [State.GAME_OVER]:'El macrófago capturó tu fago. Fin de la partida.', [State.COMPLETE]:'Tiempo terminado.'};
-  const stage = stageInfo[state];
+  const stage = getStageInfo(state);
   document.getElementById('gameStatus').textContent = message || endings[state] || (stage ? `${stage[0]}. ${stage[2]}` : '');
 }
 
@@ -77,7 +77,9 @@ function registerMinigameControls() {
     for (const [i,item] of nucleotideGame.nucleotides.entries()) {
       registerSemanticControl(`nucleotide-${i}`,item.x-55,item.y-55,110,110,`Seleccionar nucleótido ${item.code}`,()=>{
         keyboardSelection = item;
-        announceGameState(`Nucleótido ${item.code} seleccionado. Elige su destino con Tab y pulsa Enter.`);
+        announceGameState(mobileControls
+          ? `Nucleótido ${item.code} seleccionado. Toca la casilla con la misma letra.`
+          : `Nucleótido ${item.code} seleccionado. Elige su destino con Tab y pulsa Enter.`);
       });
     }
     for (const [i,slot] of nucleotideGame.slots.entries()) if (!slot.filled) {
@@ -101,7 +103,9 @@ function registerMinigameControls() {
       registerSemanticControl(`part-${part.kind}`,part.x-60,y-55,120,110,label,()=>{
         if (!keyboardSelection || keyboardSelection===part) {
           keyboardSelection=part;
-          announceGameState(`${names[part.kind]} seleccionado. Elige la pieza de destino con Tab y pulsa Enter.`);
+          announceGameState(mobileControls
+            ? `${names[part.kind]} seleccionado. Toca la pieza que debe unirse.`
+            : `${names[part.kind]} seleccionado. Elige la pieza de destino con Tab y pulsa Enter.`);
           return;
         }
         const item=keyboardSelection,dx=part.x-item.x,dy=part.y-item.y;
@@ -117,6 +121,7 @@ function registerMinigameControls() {
     }
   }
   if (state === State.LYSIS && !lysis.burst) {
-    registerSemanticControl('lysis-tap',safeCenterX()-180,safeBottom(70,40),360,70,'Liberar fagos: pulsa varias veces',()=>pendingActionTaps++);
+    registerSemanticControl('lysis-tap',safeCenterX()-180,safeBottom(70,40),360,70,
+      mobileControls ? 'Liberar fagos: toca varias veces' : 'Liberar fagos: pulsa varias veces',()=>pendingActionTaps++);
   }
 }

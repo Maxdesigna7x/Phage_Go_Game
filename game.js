@@ -19,7 +19,7 @@ const storyIntroCaption = document.getElementById("storyIntroCaption");
 const displayNotice = document.getElementById("displayNotice");
 const retryLoadingButton = document.getElementById("retryLoadingButton");
 const loadingStatus = document.getElementById("loadingStatus");
-const BUILD_VERSION = "20261020-35";
+const BUILD_VERSION = "20261020-36";
 const STORY_INTRO_FADE_MS = 260;
 const SIMULATION_STEP = 1 / 60;
 const MAX_FRAME_SECONDS = 0.25; // Discard long stalls equally for gameplay and its clocks.
@@ -243,6 +243,19 @@ const stageInfo = {
   [State.LYSIS]: ["Lisis", 6, "Toca la pantalla o pulsa ESPACIO para liberar los fagos."],
   [State.ESCAPE]: ["Nuevos fagos", 6, "¡Libre! Sigue explorando con uno de los fagos que creaste."],
 };
+const MOBILE_STAGE_OBJECTIVES = {
+  [State.ADSORPTION]: "Mantén pulsada la bacteria para iniciar la inyección.",
+  [State.INJECTION]: "Mantén pulsada la bacteria para inyectar el ADN.",
+  [State.NUCLEOTIDE_MINIGAME]: "Toca un nucleótido y luego el espacio de su misma letra.",
+  [State.PART_ASSEMBLY]: "Toca una pieza y su destino, o arrástralas para unirlas.",
+  [State.LYSIS]: "Toca varias veces para liberar los fagos.",
+};
+
+function getStageInfo(stage = state) {
+  const info = stageInfo[stage];
+  if (!info || !mobileControls || !MOBILE_STAGE_OBJECTIVES[stage]) return info;
+  return [info[0], info[1], MOBILE_STAGE_OBJECTIVES[stage]];
+}
 
 canvas.width = W;
 canvas.height = H;
@@ -1789,9 +1802,9 @@ function drawDnaReplication() {
   const processed = replication.dnaPieces.filter(d => d.processed).length;
   drawCycleStatsSide(processed);
   if (replication.dnaPieces.length < TARGET_DNA) {
-    drawTextCentered("Click en un ADN para duplicarlo", safeCenterX(), safeBottom(0, 38), 30, "#fff", "900");
+    drawTextCentered(mobileControls ? "Toca un ADN para duplicarlo" : "Haz clic en un ADN para duplicarlo", safeCenterX(), safeBottom(0, 38), 30, "#fff", "900");
   } else if (processed < TARGET_DNA) {
-    drawTextCentered("Click en un ADN brillante para construir un fago", safeCenterX(), safeBottom(0, 38), 30, "#fff", "900");
+    drawTextCentered(mobileControls ? "Toca un ADN brillante para construir un fago" : "Haz clic en un ADN brillante para construir un fago", safeCenterX(), safeBottom(0, 38), 30, "#fff", "900");
   }
   if (replication.messageTimer > 0) drawMinigameHint(replication.message);
 }
@@ -2031,7 +2044,7 @@ function drawComplete() {
 }
 
 function drawHud() {
-  const [name, stage, objective] = stageInfo[state];
+  const [name, stage, objective] = getStageInfo();
   let instruction = objective;
   if (state === State.SEARCH) instruction = "Acércate y mantén pulsada una bacteria sana brillante para adherirte.";
   if (state === State.SEARCH && mobileControls) instruction = attachCandidate
@@ -2039,14 +2052,22 @@ function drawHud() {
     : "Toca y desliza para moverte. Busca una bacteria brillante.";
   if (state === State.ADSORPTION && attachTimer < DOCK_SECONDS) instruction = "El fago se está posando sobre la bacteria…";
   if (state === State.PART_ASSEMBLY) instruction = "Guarda el ADN y ensambla las piezas.";
-  if (state === State.LYSIS) instruction = "¡Pulsa muchas veces! La barra no retrocede.";
+  if (state === State.LYSIS) instruction = mobileControls
+    ? "¡Toca muchas veces! La barra no retrocede."
+    : "¡Pulsa muchas veces! La barra no retrocede.";
   const objectiveText = instruction;
   const objectiveX = safeX(SAFE_MARGIN);
   const objectiveY = safeY(SAFE_MARGIN);
   if (![State.DNA_REPLICATION, State.NUCLEOTIDE_MINIGAME, State.BIOSYNTHESIS, State.PART_ASSEMBLY].includes(state)) {
-  drawPanel(objectiveX, objectiveY, 340, 132, 0.48);
-  drawTextCentered("Objetivo", objectiveX + 170, objectiveY + 38, 22, "#fff", "900");
-  wrapTextCentered(objectiveText, objectiveX + 170, objectiveY + 75, 260, 22, "#fff");
+    const objectiveWidth = 340;
+    const objectiveTextWidth = objectiveWidth - 40;
+    const objectiveLineHeight = 22;
+    const objectiveTextY = 75;
+    const objectiveLines = wrapTextLines(objectiveText, objectiveTextWidth, "800 21px Nunito, sans-serif");
+    const objectiveHeight = Math.max(132, objectiveTextY + (objectiveLines.length - 1) * objectiveLineHeight + 20);
+    drawPanel(objectiveX, objectiveY, objectiveWidth, objectiveHeight, 0.48);
+    drawTextCentered("Objetivo", objectiveX + objectiveWidth / 2, objectiveY + 38, 22, "#fff", "900");
+    drawWrappedTextCentered(objectiveLines, objectiveX + objectiveWidth / 2, objectiveY + objectiveTextY, objectiveLineHeight, "#fff", "800 21px Nunito, sans-serif");
   }
   drawStageIcons(stage, name);
   if (gameMode === GameMode.HARD) drawHardModeHud();
@@ -2122,7 +2143,7 @@ function drawProgress(x, y, w, h, value, color) {
 function actionPromptText() {
   if (state === State.SEARCH) return 'Adherirse a la bacteria';
   if (state === State.ADSORPTION && attachTimer < DOCK_SECONDS) return 'Adhiriéndose a la bacteria…';
-  if (state === State.ADSORPTION) return 'Pulsa para iniciar la inyección';
+  if (state === State.ADSORPTION) return mobileControls ? 'Toca para iniciar la inyección' : 'Pulsa para iniciar la inyección';
   return 'Mantén pulsado para inyectar ADN';
 }
 
@@ -2331,27 +2352,44 @@ function wrapText(text, x, y, maxWidth, lineHeight, color) {
 }
 
 function wrapTextCentered(text, x, y, maxWidth, lineHeight, color) {
+  const font = "800 21px Nunito, sans-serif";
+  const lines = wrapTextLines(text, maxWidth, font);
+  drawWrappedTextCentered(lines, x, y, lineHeight, color, font);
+  return lines.length;
+}
+
+function wrapTextLines(text, maxWidth, font) {
   const words = text.split(" ");
+  const lines = [];
   let line = "";
   ctx.save();
-  ctx.textAlign = "center";
-  ctx.font = '800 21px Nunito, sans-serif';
-  ctx.fillStyle = color;
-  ctx.strokeStyle = "rgba(4, 20, 34, 0.65)";
-  ctx.lineWidth = 3;
+  ctx.font = font;
   for (const word of words) {
     const test = line ? `${line} ${word}` : word;
     if (ctx.measureText(test).width > maxWidth && line) {
-      ctx.strokeText(line, x, y);
-      ctx.fillText(line, x, y);
+      lines.push(line);
       line = word;
-      y += lineHeight;
     } else {
       line = test;
     }
   }
-  ctx.strokeText(line, x, y);
-  ctx.fillText(line, x, y);
+  if (line) lines.push(line);
+  ctx.restore();
+  return lines;
+}
+
+function drawWrappedTextCentered(lines, x, y, lineHeight, color, font) {
+  ctx.save();
+  ctx.textAlign = "center";
+  ctx.font = font;
+  ctx.fillStyle = color;
+  ctx.strokeStyle = "rgba(4, 20, 34, 0.65)";
+  ctx.lineWidth = 3;
+  lines.forEach((line, index) => {
+    const lineY = y + index * lineHeight;
+    ctx.strokeText(line, x, lineY);
+    ctx.fillText(line, x, lineY);
+  });
   ctx.restore();
 }
 
@@ -3084,7 +3122,9 @@ function drawInfectionControl() {
   const view = infectionScreenEntity(b);
   const radius = Math.min(220, BACTERIA_BODY_WIDTH * view.scale * 0.4);
   registerSemanticControl('action', view.x-radius, view.y-radius/2, radius*2, radius,
-    state === State.SEARCH ? 'Mantén ESPACIO o Enter para adherirte a esta bacteria' : 'Mantén ESPACIO o Enter para inyectar ADN', () => {});
+    mobileControls
+      ? (state === State.SEARCH ? 'Mantén pulsada la bacteria para adherirte' : 'Mantén pulsada la bacteria para inyectar ADN')
+      : (state === State.SEARCH ? 'Mantén ESPACIO o Enter para adherirte a esta bacteria' : 'Mantén ESPACIO o Enter para inyectar ADN'), () => {});
   if (state === State.SEARCH && infectionPointer?.elapsed > 0) {
     drawProgress(view.x-90, view.y+45, 180, 14, infectionPointer.elapsed/INFECTION_HOLD_SECONDS, '#9be8ff');
   }
