@@ -19,7 +19,7 @@ const storyIntroCaption = document.getElementById("storyIntroCaption");
 const displayNotice = document.getElementById("displayNotice");
 const retryLoadingButton = document.getElementById("retryLoadingButton");
 const loadingStatus = document.getElementById("loadingStatus");
-const BUILD_VERSION = "20261020-40";
+const BUILD_VERSION = "20261020-41";
 const STORY_INTRO_FADE_MS = 260;
 const SIMULATION_STEP = 1 / 60;
 const MAX_FRAME_SECONDS = 0.25; // Discard long stalls equally for gameplay and its clocks.
@@ -276,7 +276,7 @@ const STORY_INTRO_ALT_TEXTS = [
   "Los fagos se multiplican dentro de la bacteria",
   "La bacteria se rompe y libera nuevos fagos",
 ];
-function loadImage(src) {
+function loadImage(src, priority = "auto") {
   return new Promise((resolve, reject) => {
     const image = new Image();
     const finish = (error) => {
@@ -287,18 +287,23 @@ function loadImage(src) {
     const timeout = setTimeout(() => finish(new Error(`Tiempo de espera agotado: ${src}`)), 10000);
     image.onload = () => finish();
     image.onerror = () => finish(new Error(`No se pudo cargar ${src}`));
+    image.fetchPriority = priority;
     image.src = `${src}?v=${BUILD_VERSION}`;
   });
 }
 
+// Keep the menu ahead of large story panels and later minigames on slow connections.
+const MENU_ASSETS = ['introBack', 'title', 'easyIcon', 'hardIcon'];
+const EARLY_ASSETS = ['pointingOn', 'pointingOff', 'storyIntro1', 'phageSprite',
+  'bacteriaOutside1', 'arrow', 'stage0', 'clock'];
 async function loadImages() {
   let completed = 0;
   const entries = Object.entries(ASSETS);
-  const results = await Promise.allSettled(entries.map(async ([key, src]) => {
+  const loadEntry = async ([key, src], priority) => {
     if (!img[key] || img[key].fallback) {
       let error;
-      for (let attempt=0; attempt<2; attempt++) {
-        try { img[key] = await loadImage(src); error = null; break; }
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try { img[key] = await loadImage(src, priority); error = null; break; }
         catch (failure) { error = failure; }
       }
       if (error) {
@@ -308,12 +313,23 @@ async function loadImages() {
       }
     }
     loadingStatus.textContent = `Cargando imágenes… ${++completed}/${entries.length}`;
-  }));
-  const failed = results.find(result => result.status === 'rejected');
-  if (failed) throw failed.reason;
+  };
+  const loadGroup = async (group, priority) => {
+    let cursor = 0;
+    const results = await Promise.allSettled(Array.from({ length: Math.min(4, group.length) }, async () => {
+      while (cursor < group.length) await loadEntry(group[cursor++], priority);
+    }));
+    const failed = results.find(result => result.status === 'rejected');
+    if (failed) throw failed.reason;
+  };
+  await loadGroup(entries.filter(([key]) => MENU_ASSETS.includes(key)), 'high');
+  // Paint the actual menu while the remaining assets load; play stays disabled.
+  drawIntro();
+  rotateNotice.style.setProperty("--portrait-story-background", `url("${ASSETS.story}?v=${BUILD_VERSION}")`);
+  await loadGroup(entries.filter(([key]) => EARLY_ASSETS.includes(key)), 'high');
+  await loadGroup(entries.filter(([key]) => !MENU_ASSETS.includes(key) && !EARLY_ASSETS.includes(key)), 'low');
 }
 
-rotateNotice.style.setProperty("--portrait-story-background", `url("${ASSETS.story}?v=${BUILD_VERSION}")`);
 
 async function bootstrapGame() {
   if (loadingInProgress || gameReady) return;
@@ -386,11 +402,14 @@ function advanceStoryIntro() {
       menuButtons.classList.remove("hidden");
       normalButton.focus({ preventScroll: true });
     }
-    playfield.inert = false;
     storyIntro.classList.add("is-leaving");
     setTimeout(() => {
       storyIntro.classList.add("hidden");
       storyIntro.classList.remove("is-visible", "is-leaving");
+      clearHeldInputs();
+      playfield.inert = false;
+      storyIntroNext.blur?.();
+      canvas.focus?.({ preventScroll: true });
       storyIntroActive = false;
       storyIntroTransitioning = false;
     }, STORY_INTRO_FADE_MS);
@@ -492,6 +511,7 @@ function launchGame(mode) {
   cellField = [];
   hardModeElapsed = 0;
   poppedBubbles.clear();
+  visualTutorial.learned = {};
   visualTutorial.key = null;
   visualTutorial.age = 0;
   visualTutorial.movementInputSeen = false;
@@ -763,7 +783,7 @@ function setState(next) {
 function loop(time) {
   let dt = Math.min(MAX_FRAME_SECONDS, Math.max(0, (time - lastTime) / 1000 || 0));
   lastTime = time;
-  if (isDisplayBlocked() || document.hidden || soundEffects.menuOpen) {
+  if (isDisplayBlocked() || document.hidden || soundEffects.menuOpen || storyIntroActive) {
     if (!soundEffects.menuOpen) soundEffects.stopAll();
     if (pausedAt === null) pausedAt = performance.now();
     simulationAccumulator = 0;
@@ -3149,18 +3169,11 @@ function drawInfectionControl() {
   }
 }
 
-const TUTORIAL_STORAGE_KEY = 'phage-go-tutorial-v1';
-function readTutorialProgress() {
-  try {
-    const value = JSON.parse(window.localStorage?.getItem(TUTORIAL_STORAGE_KEY) || '{}');
-    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-  } catch { return {}; }
-}
-const visualTutorial = { learned: readTutorialProgress(), key: null, age: 0, movementInputSeen: false };
+// Lessons belong to the current run: each action is demonstrated once per game.
+// Old localStorage progress must not suppress a new game's tutorials.
+const visualTutorial = { learned: {}, key: null, age: 0, movementInputSeen: false };
 function learnTutorial(key) {
-  if (visualTutorial.learned[key] === true) return;
   visualTutorial.learned[key] = true;
-  try { window.localStorage?.setItem(TUTORIAL_STORAGE_KEY, JSON.stringify(visualTutorial.learned)); } catch { /* Session progress still works. */ }
 }
 
 function getTutorialCue() {
@@ -3275,7 +3288,7 @@ function smoothstep(edge0, edge1, x) {
 }
 
 window.addEventListener("keydown", ev => {
-  if (soundEffects.menuOpen) return;
+  if (soundEffects.menuOpen || storyIntroActive) return;
   const key = ev.key.length === 1 ? ev.key.toLowerCase() : ev.key;
   if (ev.key === "Escape" && state !== State.INTRO) {
     resetGame();
@@ -3295,7 +3308,7 @@ window.addEventListener("keyup", ev => {
 });
 
 canvas.addEventListener("pointerdown", ev => {
-  if (!gameReady || isDisplayBlocked() || soundEffects.menuOpen) return;
+  if (!gameReady || isDisplayBlocked() || soundEffects.menuOpen || storyIntroActive) return;
   const p = screenToCanvas(ev);
   if (state === State.LYSIS) {
     if (!lysis.burst) pendingActionTaps++;

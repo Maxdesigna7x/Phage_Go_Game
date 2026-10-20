@@ -1568,26 +1568,26 @@ test('infection pointer cannot transfer ownership and cancellation, blur and men
   }
 });
 
-test('tutorial progress persists only learned actions and survives unavailable storage', () => {
+test('tutorial progress belongs to each run and ignores old or unavailable storage', () => {
   const saved=new Map();
   const storage={getItem:k=>saved.get(k),setItem:(k,v)=>saved.set(k,v)};
   const first=game(null,storage);
   first.run(`startGame(GameMode.NORMAL);learnTutorial('movement');learnTutorial('nucleotide');resetGame();`);
   const second=game(null,storage);
-  assert.equal(second.run('visualTutorial.learned.movement'),true);
-  assert.equal(second.run('visualTutorial.learned.nucleotide'),true);
+  assert.equal(second.run('visualTutorial.learned.movement'),undefined);
+  assert.equal(second.run('visualTutorial.learned.nucleotide'),undefined);
   assert.equal(second.run('visualTutorial.learned.lysis'),undefined);
   const denied=game(null,{getItem(){throw Error('denied')},setItem(){throw Error('denied')}});
   denied.run("learnTutorial('movement');resetGame();");
   assert.equal(denied.run('visualTutorial.learned.movement'),true);
 });
 
-test('a new game restarts unfinished tutorial timing without clearing learned actions', () => {
+test('a new game restarts all lessons and unfinished tutorial timing', () => {
   const {run}=game();
   assert.equal(run(`(()=>{
     visualTutorial.learned={nucleotide:true};visualTutorial.key='movement-v2';visualTutorial.age=5.9;visualTutorial.movementInputSeen=true;
     launchGame(GameMode.NORMAL);
-    return visualTutorial.key===null&&visualTutorial.age===0&&!visualTutorial.movementInputSeen&&visualTutorial.learned.nucleotide===true;
+    return visualTutorial.key===null&&visualTutorial.age===0&&!visualTutorial.movementInputSeen&&visualTutorial.learned.nucleotide===undefined;
   })()`),true);
 });
 
@@ -1712,4 +1712,35 @@ test('the final story image fades over a rendered first gameplay frame', () => {
     const renderIndex=events.indexOf('render-game'), leavingIndex=events.indexOf('add:is-leaving'), hiddenIndex=events.indexOf('add:hidden');
     return renderIndex>=0&&renderIndex<leavingIndex&&leavingIndex<hiddenIndex&&!storyIntroActive;
   })()`),true);
+});
+
+
+test('presentation input cannot advance or dismiss the first movement tutorial on desktop or mobile', () => {
+  for (const mobile of [false, true]) {
+    const {run,listeners}=game();
+    run(`launchGame(GameMode.NORMAL);mobileControls=${mobile};storyIntroActive=true;visualTutorial.age=0;lastTime=0;`);
+    listeners['window:keydown']({key:'ArrowRight',preventDefault(){}});
+    listeners['game:pointerdown']({clientX:900,clientY:450,pointerId:1,preventDefault(){}});
+    for(let i=1;i<=500;i++) run(`loop(${i*17});`);
+    assert.equal(run('visualTutorial.age'),0);
+    assert.equal(run('keys.size'),0);
+    assert.equal(run('mouse.down'),false);
+    run('storyIntroActive=false;loop(8517);');
+    assert.equal(run('getTutorialCue().key'),'movement-v2');
+    assert.equal(run('visualTutorial.learned["movement-v2"]'),undefined);
+  }
+});
+
+test('image loading paints the menu first and bounds simultaneous downloads', async () => {
+  const {run,sandbox}=game();
+  run('for(const key of Object.keys(img))delete img[key];');
+  const requests=[];let active=0,peak=0;
+  sandbox.Image=class {
+    constructor(){this.width=this.height=512;}
+    set src(url){requests.push(url);active++;peak=Math.max(peak,active);queueMicrotask(()=>{active--;this.onload();});}
+  };
+  await run('loadImages()');
+  assert.equal(peak,4);
+  assert.deepEqual(requests.slice(0,4).map(url=>url.split('?')[0]), Array.from(run('MENU_ASSETS.map(key=>ASSETS[key])')));
+  assert.ok(requests.findIndex(url=>url.includes('pointing_pulse_on'))<requests.findIndex(url=>url.includes('DNA_broken')));
 });
