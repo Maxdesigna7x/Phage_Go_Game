@@ -4,9 +4,9 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Phage-Go!</title>
-    <meta name="app-version" content="2026.10.20-30">
+    <meta name="app-version" content="2026.10.20-35">
     <link rel="icon" href="data:,">
-    <link rel="stylesheet" href="style.css?v=20261020-31">
+    <link rel="stylesheet" href="style.css?v=20261020-33">
   </head>
   <body>
     <main id="app">
@@ -31,13 +31,22 @@
       </div>
       <div id="displayNotice" class="display-notice hidden" role="status"></div>
       </div>
-      <div id="rotateNotice" class="rotate-notice hidden" role="status">
-        <div class="rotate-icon" aria-hidden="true">↻</div>
+      <div id="storyIntro" class="story-intro hidden" role="dialog" aria-modal="true" aria-labelledby="storyIntroTitle">
+        <h1 id="storyIntroTitle" class="sr-only">Así se juega Phage-Go!</h1>
+        <button id="storyIntroNext" class="story-intro-next" type="button" aria-label="Avanzar a la siguiente escena">
+          <img id="storyIntroImage" class="story-intro-image" alt="Un fago se acerca a una bacteria" draggable="false">
+          <span class="story-intro-footer">
+            <span id="storyIntroCaption" class="story-intro-caption">Infecta una bacteria con tu fago.</span>
+          </span>
+        </button>
+      </div>
+      <div id="rotateNotice" class="rotate-notice hidden" aria-labelledby="orientationTitle" aria-describedby="orientationMessage">
+        <button id="rotateFullscreenButton" class="rotate-icon-button" type="button" aria-label="Activar pantalla completa y girar la pantalla">
+          <span class="rotate-icon" aria-hidden="true">↻</span>
+        </button>
         <h1 id="orientationTitle">Gira tu pantalla</h1>
         <p id="orientationMessage">Gira tu dispositivo y activa pantalla completa para jugar.</p>
-        <button id="rotateFullscreenButton" type="button">⛶ Pantalla completa</button>
-        <button id="continueWindowedButton" type="button">Continuar en horizontal</button>
-        <p id="rotateStatus" class="rotate-status" role="status"></p>
+        <p id="rotateStatus" class="sr-only" role="status"></p>
       </div>
     </main>
     <dialog id="soundPanel" aria-labelledby="soundTitle">
@@ -52,6 +61,6 @@
     <script src="world.js?v=20261020-31"></script>
     <script src="enemies.js?v=20261020-31"></script>
     <script src="controls.js?v=20261020-31"></script>
-    <script src="game.js?v=20261020-31"></script>
+    <script src="game.js?v=20261020-35"></script>
   </body>
 </html>

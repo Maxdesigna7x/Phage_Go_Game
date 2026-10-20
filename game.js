@@ -12,10 +12,15 @@ const playfield = document.getElementById("playfield");
 const menuButton = document.getElementById("menuButton");
 const fullscreenButton = document.getElementById("fullscreenButton");
 const rotateNotice = document.getElementById("rotateNotice");
+const storyIntro = document.getElementById("storyIntro");
+const storyIntroNext = document.getElementById("storyIntroNext");
+const storyIntroImage = document.getElementById("storyIntroImage");
+const storyIntroCaption = document.getElementById("storyIntroCaption");
 const displayNotice = document.getElementById("displayNotice");
 const retryLoadingButton = document.getElementById("retryLoadingButton");
 const loadingStatus = document.getElementById("loadingStatus");
-const BUILD_VERSION = "20261020-31";
+const BUILD_VERSION = "20261020-35";
+const STORY_INTRO_FADE_MS = 260;
 const SIMULATION_STEP = 1 / 60;
 const MAX_FRAME_SECONDS = 0.25; // Discard long stalls equally for gameplay and its clocks.
 let simulationAccumulator = 0;
@@ -23,6 +28,10 @@ let gameReady = false;
 let loadingInProgress = false;
 let loopStarted = false;
 let fullscreenDeclined = false;
+let storyIntroIndex = 0;
+let storyIntroTransitioning = false;
+let storyIntroActive = false;
+let pendingGameMode = null;
 
 let W = 1600;
 const H = 900;
@@ -102,6 +111,10 @@ const DesktopMovementMode = {
 const ASSETS = {
   pointingOn: "assets_webp/pointing_pulse_on.webp",
   pointingOff: "assets_webp/pointing_pulse_off.webp",
+  story: "assets_webp/Story.webp",
+  storyIntro1: "assets_webp/storys/wide/0.webp",
+  storyIntro2: "assets_webp/storys/wide/2.webp",
+  storyIntro3: "assets_webp/storys/wide/5.webp",
   introBack: "assets_webp/Intro_back_V2.webp",
   macrofago_idle: "assets_webp/macrofago/macrofago_idle.webp",
   macrofago_reach: "assets_webp/macrofago/macrofago_reach.webp",
@@ -234,7 +247,8 @@ const stageInfo = {
 canvas.width = W;
 canvas.height = H;
 
-const OPTIONAL_ASSETS = new Set(['introBack', 'title', 'easyIcon', 'hardIcon', 'flare', 'noise', ...Array.from({length:8}, (_,i)=>`bg${i+1}`)]);
+const OPTIONAL_ASSETS = new Set(['introBack', 'title', 'easyIcon', 'hardIcon', 'flare', 'noise', 'story', ...Array.from({length:8}, (_,i)=>`bg${i+1}`)]);
+const STORY_INTRO_ASSETS = [ASSETS.storyIntro1, ASSETS.storyIntro2, ASSETS.storyIntro3];
 function loadImage(src) {
   return new Promise((resolve, reject) => {
     const image = new Image();
@@ -272,6 +286,8 @@ async function loadImages() {
   if (failed) throw failed.reason;
 }
 
+rotateNotice.style.setProperty("--portrait-story-background", `url("${ASSETS.story}?v=${BUILD_VERSION}")`);
+
 async function bootstrapGame() {
   if (loadingInProgress || gameReady) return;
   loadingInProgress = true;
@@ -299,6 +315,69 @@ function init() {
   initAmbientLife();
   resetGame();
   gameReady = true;
+}
+
+function startStoryIntro(mode) {
+  pendingGameMode = mode;
+  storyIntroIndex = 0;
+  storyIntroTransitioning = false;
+  storyIntroActive = true;
+  storyIntroImage.classList.remove("is-fading");
+  storyIntroImage.src = `${STORY_INTRO_ASSETS[storyIntroIndex]}?v=${BUILD_VERSION}`;
+  updateStoryIntroControls();
+  menuButtons.classList.add("hidden");
+  playfield.inert = true;
+  storyIntro.classList.remove("hidden", "is-leaving");
+  requestAnimationFrame(() => storyIntro.classList.add("is-visible"));
+  storyIntroNext.focus({ preventScroll: true });
+}
+
+function updateStoryIntroControls() {
+  const finalScene = storyIntroIndex === STORY_INTRO_ASSETS.length - 1;
+  storyIntroCaption.textContent = [
+    "Infecta una bacteria con tu fago.",
+    "Replica su ADN y ensambla nuevos fagos.",
+    "Libéralos cuando la bacteria se rompa.",
+  ][storyIntroIndex];
+  storyIntroNext.setAttribute("aria-label", finalScene ? "Iniciar partida" : "Avanzar a la siguiente escena");
+  storyIntroImage.alt = [
+    "Un fago se acerca a una bacteria",
+    "Los fagos se multiplican dentro de la bacteria",
+    "La bacteria se rompe y libera nuevos fagos",
+  ][storyIntroIndex];
+}
+
+function advanceStoryIntro() {
+  if (!storyIntroActive || storyIntroTransitioning) return;
+  storyIntroTransitioning = true;
+  storyIntroImage.classList.add("is-fading");
+  setTimeout(() => {
+    if (storyIntroIndex + 1 >= STORY_INTRO_ASSETS.length) {
+      storyIntro.classList.add("is-leaving");
+      setTimeout(() => {
+        storyIntro.classList.add("hidden");
+        storyIntro.classList.remove("is-visible", "is-leaving");
+        storyIntroActive = false;
+        storyIntroTransitioning = false;
+        playfield.inert = false;
+        const mode = pendingGameMode;
+        pendingGameMode = null;
+        if (mode) launchGame(mode);
+        else {
+          menuButtons.classList.remove("hidden");
+          normalButton.focus({ preventScroll: true });
+        }
+      }, STORY_INTRO_FADE_MS);
+      return;
+    }
+    storyIntroIndex++;
+    storyIntroImage.src = `${STORY_INTRO_ASSETS[storyIntroIndex]}?v=${BUILD_VERSION}`;
+    updateStoryIntroControls();
+    requestAnimationFrame(() => {
+      storyIntroImage.classList.remove("is-fading");
+      storyIntroTransitioning = false;
+    });
+  }, STORY_INTRO_FADE_MS);
 }
 
 function resetGame() {
@@ -367,7 +446,11 @@ function resetCycleState(x = player?.x || 330, y = player?.y || 470, rotation = 
 }
 
 function startGame(mode) {
-  if (!gameReady || isDisplayBlocked()) return;
+  if (!gameReady || isDisplayBlocked() || storyIntroActive) return;
+  startStoryIntro(mode);
+}
+
+function launchGame(mode) {
   const nextSeed = Math.floor(Math.random() * 0x100000000) >>> 0;
   worldSeed = nextSeed === worldSeed ? (nextSeed + 1) >>> 0 : nextSeed;
   clearHeldInputs();
@@ -2736,10 +2819,11 @@ function resizeCanvasToViewport() {
   }
   const blocked = isDisplayBlocked();
   rotateNotice.classList.toggle("hidden", !blocked);
+  rotateNotice.classList.toggle("portrait-mobile", mobileControls && !landscapeReady);
   document.getElementById("orientationTitle").textContent = landscapeReady ? "Pantalla completa" : "Gira tu pantalla";
   document.getElementById("orientationMessage").textContent = landscapeReady
     ? "Toca el botón para jugar a pantalla completa. Tu partida te espera."
-    : "Phage-Go! se juega en horizontal. Gira tu dispositivo y activa pantalla completa.";
+    : "Toca el icono y gira tu dispositivo para jugar en horizontal.";
   fullscreenButton.classList.toggle("hidden", Boolean(document.fullscreenElement || document.webkitFullscreenElement));
   if (blocked) {
     clearHeldInputs(); if (pausedAt === null) pausedAt = performance.now();
@@ -2917,15 +3001,19 @@ function showDisplayNotice(message) {
   displayNoticeTimeout = setTimeout(() => displayNotice.classList.add("hidden"), 4500);
 }
 
-async function toggleFullscreen() {
+async function toggleFullscreen({ requestLandscape = false } = {}) {
   try {
-    if (document.fullscreenElement || document.webkitFullscreenElement) {
+    const alreadyFullscreen = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+    if (alreadyFullscreen && !requestLandscape) {
       if (document.exitFullscreen) await document.exitFullscreen();
       else document.webkitExitFullscreen?.();
-    } else {
+    } else if (!alreadyFullscreen) {
       if (document.documentElement.requestFullscreen) await document.documentElement.requestFullscreen();
       else if (document.documentElement.webkitRequestFullscreen) document.documentElement.webkitRequestFullscreen();
       else { showDisplayNotice("Este navegador no ofrece pantalla completa. Puedes jugar en horizontal."); return; }
+      fullscreenDeclined = false;
+    }
+    if (requestLandscape || !alreadyFullscreen) {
       fullscreenDeclined = false;
       try { await screen.orientation?.lock?.("landscape"); } catch { /* Rotate prompt remains the fallback on unsupported devices. */ }
     }
@@ -3212,16 +3300,12 @@ document.addEventListener("visibilitychange", () => {
 document.addEventListener("fullscreenchange", resizeCanvasToViewport);
 document.addEventListener("webkitfullscreenchange", resizeCanvasToViewport);
 fullscreenButton.addEventListener("click", toggleFullscreen);
-document.getElementById("rotateFullscreenButton").addEventListener("click", toggleFullscreen);
+document.getElementById("rotateFullscreenButton").addEventListener("click", () => toggleFullscreen({requestLandscape:true}));
+storyIntroNext.addEventListener("click", advanceStoryIntro);
 normalButton.addEventListener("click", () => startGame(GameMode.NORMAL));
 hardButton.addEventListener("click", () => startGame(GameMode.HARD));
 restartButton.addEventListener("click", resetGame);
 menuButton.addEventListener("click", resetGame);
 retryLoadingButton.addEventListener('click', bootstrapGame);
-document.getElementById('continueWindowedButton').addEventListener('click', () => {
-  fullscreenDeclined = true;
-  resizeCanvasToViewport();
-});
-
 resizeCanvasToViewport();
 void bootstrapGame();
