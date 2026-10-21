@@ -10,7 +10,8 @@
   font-weight: 200 1000;
   font-display: swap;
 }
-button { font-family: "Lilita One", sans-serif; }
+button { font-family: sans-serif; }
+html.fonts-ready button { font-family: "Lilita One", sans-serif; }
 
 * {
   box-sizing: border-box;
@@ -25,6 +26,10 @@ body {
   overscroll-behavior: none;
   background: #061827;
   color: #f7fbff;
+  font-family: system-ui, sans-serif;
+}
+html.fonts-ready,
+html.fonts-ready body {
   font-family: Nunito, system-ui, sans-serif;
 }
 
@@ -70,11 +75,11 @@ body {
 .rotate-notice {
   position: absolute; inset: 0; z-index: 10; display: flex; flex-direction: column;
   align-items: center; justify-content: center; text-align: center; padding: 24px;
-  background: radial-gradient(circle at 50% 30%, #14586c, #061827 75%);
+  background: linear-gradient(180deg, rgba(3, 20, 34, 0.22), rgba(3, 20, 34, 0.48)), url("assets_webp/Intro_back_V2.webp?v=20261020-58") center / cover no-repeat #061827;
 }
 .rotate-notice.portrait-mobile {
   background-color: #061827;
-  background-image: linear-gradient(180deg, rgba(3, 20, 34, 0.22), rgba(3, 20, 34, 0.48)), url("assets_webp/Story.webp?v=20261020-43");
+  background-image: linear-gradient(180deg, rgba(3, 20, 34, 0.22), rgba(3, 20, 34, 0.48)), url("assets_webp/Story.webp?v=20261020-58");
   background-position: center, center top;
   background-size: 100% 100%, auto 100%;
   background-repeat: no-repeat, no-repeat;
@@ -84,7 +89,7 @@ body {
 @media (orientation: portrait) {
   .rotate-notice.initial-orientation {
     display: flex;
-    background: linear-gradient(180deg, rgba(3, 20, 34, 0.22), rgba(3, 20, 34, 0.48)), url("assets_webp/Story.webp?v=20261020-43") center top / auto 100% no-repeat #061827;
+    background: linear-gradient(180deg, rgba(3, 20, 34, 0.22), rgba(3, 20, 34, 0.48)), url("assets_webp/Story.webp?v=20261020-58") center top / auto 100% no-repeat #061827;
   }
 }
 .rotate-icon-button {

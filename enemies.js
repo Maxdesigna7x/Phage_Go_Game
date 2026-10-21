@@ -1,9 +1,10 @@
 // Hard-mode macrophage. Animation and AI use simulation time, so pause freezes both.
 const MACROPHAGE = Object.freeze({
   scale: 0.4, radius: 255, patrolSpeed: 48, chaseSpeed: 155,
-  detection: 760, abandon: 1100, lostSeconds: 2.4, turnSpeed: 1.8,
-  windupSeconds: 1.15, closeSeconds: 0.65, captureSeconds: 0.24,
-  captureRadius: 88, recoverySeconds: 2, graceSeconds: 3,
+  detection: 760, abandon: 1100, lostSeconds: 2.4, turnSpeed: 2.4,
+  windupSeconds: 0.95, closeSeconds: 0.6, captureSeconds: 0.16,
+  windupRadius: 88, captureRadius: 96, suctionRadius: 165,
+  recoverySeconds: 1.75, graceSeconds: 3,
   menuSeconds: 6, maxActive: 1,
   spawnPadding: 96, warningNear: 180, warningFar: 1050,
 });
@@ -12,9 +13,13 @@ let macrophageSpawnTimer = 4;
 let macrophageGrace = MACROPHAGE.graceSeconds;
 let macrophageSerial = 0;
 let macrophageGameOver = null;
-let macrophageBlendLayer = null;
+
+function stopMacrophageSounds() {
+  for (const name of ['macrofago_alerta','macrofago_abrir','macrofago_cerrar','macrofago_evitar']) soundEffects.stop?.(name);
+}
 
 function resetMacrophages() {
+  stopMacrophageSounds();
   macrophages = [];
   macrophageSpawnTimer = 4;
   macrophageGrace = MACROPHAGE.graceSeconds;
@@ -40,32 +45,59 @@ function macrophageObstacles() { return [...bacteriaField, ...cellField]; }
 
 function canMacrophagePush(entity) { return entity!==targetBacteria; }
 
-function macrophageClearance(point, onlyAnchored = false) {
+function macrophageBodyContact(enemy, body) {
+  const ownKey = enemy.sprite || 'macrofago_idle';
+  const otherKey = body.sprite || `bacteriaOutside${body.variant}`;
+  const ownShape = collisionShape(ownKey), otherShape = collisionShape(otherKey);
+  if (!ownShape || !otherShape) return null;
+  const scale = enemy.scale || MACROPHAGE.scale, rotation = enemy.rotation || 0;
+  if (Math.hypot(body.x - enemy.x, body.y - enemy.y) > ownShape.radius * scale + otherShape.radius * body.scale + 24) return null;
+  let best = null;
+  for (const [px, py] of ownShape.points) {
+    const point = localToWorld(enemy.x, enemy.y, rotation, px * scale, py * scale);
+    const contact = spriteSurface(body, point);
+    if (contact && (!best || contact.distance < best.distance)) best = contact;
+  }
+  for (const [px, py] of otherShape.points) {
+    const point = localToWorld(body.x, body.y, body.rotation, px * body.scale, py * body.scale);
+    const contact = spriteSurface({ x: enemy.x, y: enemy.y, rotation, scale, sprite: ownKey }, point);
+    if (contact && (!best || contact.distance < best.distance)) {
+      best = { distance: contact.distance, normal: { x: -contact.normal.x, y: -contact.normal.y } };
+    }
+  }
+  return best;
+}
+
+function macrophageClearance(pose, onlyAnchored = false) {
   let clearance = Infinity;
   for (const obstacle of onlyAnchored ? (targetBacteria ? [targetBacteria] : []) : macrophageObstacles()) {
-    const shape = collisionShape(obstacle.sprite || `bacteriaOutside${obstacle.variant}`);
-    if (!shape) continue;
-    const distance = Math.hypot(point.x-obstacle.x, point.y-obstacle.y);
-    if (distance > shape.radius*obstacle.scale + MACROPHAGE.radius + 200) continue;
-    clearance = Math.min(clearance, spriteSurface(obstacle, point).distance);
+    const contact = macrophageBodyContact(pose, obstacle);
+    if (contact) clearance = Math.min(clearance, contact.distance);
   }
   return clearance;
 }
 
 function pushMacrophageObjects(enemy, angle, dt) {
-  const direction={x:Math.cos(angle),y:Math.sin(angle)};
-  for(const body of macrophageObstacles()) {
-    if(!canMacrophagePush(body)) continue;
-    const shape=collisionShape(body.sprite || `bacteriaOutside${body.variant}`);
-    if(!shape || Math.hypot(body.x-enemy.x,body.y-enemy.y)>shape.radius*body.scale+MACROPHAGE.radius+45) continue;
-    const surface=spriteSurface(body,enemy);
-    const alignment=-(surface.normal.x*direction.x+surface.normal.y*direction.y);
-    if(surface.distance>MACROPHAGE.radius+32 || alignment<.15) continue;
-    const force=420/worldBodyMass(body)*dt;
-    body.enemyMovable=true;
-    body.vx=(body.vx||0)-surface.normal.x*force;
-    body.vy=(body.vy||0)-surface.normal.y*force;
-    body.spin=clamp((body.spin||0)+(direction.y*surface.normal.x-direction.x*surface.normal.y)*dt*.12,-.4,.4);
+  const direction = { x: Math.cos(angle), y: Math.sin(angle) };
+  for (const body of macrophageObstacles()) {
+    if (!canMacrophagePush(body)) continue;
+    const contact = macrophageBodyContact(enemy, body);
+    if (!contact || contact.distance > 2) continue;
+    const normal = contact.normal;
+    const alignment = -(normal.x * direction.x + normal.y * direction.y);
+    const penetration = Math.max(0, -contact.distance);
+    if (penetration <= 0 && alignment < 0.15) continue;
+    const mass = worldBodyMass(body);
+    body.enemyMovable = true;
+    if (penetration > 0) {
+      const push = Math.min(penetration + 0.5, 22);
+      body.x -= normal.x * push;
+      body.y -= normal.y * push;
+    }
+    const force = (340 + Math.min(180, penetration * 10)) / mass * dt;
+    body.vx = (body.vx || 0) - normal.x * force;
+    body.vy = (body.vy || 0) - normal.y * force;
+    body.spin = clamp((body.spin || 0) + (direction.y * normal.x - direction.x * normal.y) * dt * 0.12, -0.4, 0.4);
   }
 }
 
@@ -77,7 +109,7 @@ function spawnMacrophage() {
     const angle = offset+i*Math.PI/12;
     const point = {x:player.x+Math.cos(angle)*radius, y:player.y+Math.sin(angle)*radius};
     const enemy = makeMacrophage(point.x, point.y, angle+Math.PI);
-    if (!isMacrophageOutsideView(enemy) || macrophageClearance(point) < MACROPHAGE.radius+45) continue;
+    if (!isMacrophageOutsideView(enemy) || macrophageClearance(enemy) < 40) continue;
     enemy.turn = macrophageSerial%2 ? 1 : -1;
     macrophages.push(enemy);
     return true;
@@ -150,41 +182,103 @@ function macrophageMouth(enemy) {
 }
 
 function changeMacrophageMode(enemy, mode) {
+  const previous = enemy.mode;
   enemy.mode = mode; enemy.elapsed = 0; enemy.capture = 0;
+  if (previous !== mode && gameMode === GameMode.HARD && state === State.SEARCH && macrophageGrace <= 0) {
+    if (mode === 'chase' && previous === 'patrol') playSound('macrofago_alerta', {volume:.42, maxDelay:180});
+    if (mode === 'windup') playSound('macrofago_abrir', {volume:.5, maxDelay:120});
+    if (mode === 'close') { soundEffects.stop?.('macrofago_abrir'); playSound('macrofago_cerrar', {volume:.42, maxDelay:120}); }
+    if (mode === 'return' && previous === 'chase') playSound('macrofago_evitar', {volume:.25, maxDelay:180});
+  }
   enemy.sprite = macrophagePose(enemy).body;
 }
 
-function moveMacrophage(enemy, targetAngle, speed, dt) {
+function startMacrophageWindup(enemy) {
+  changeMacrophageMode(enemy,'windup');
+  toastMessage='¡Va a cerrar! Escapa por un costado.';toastTimer=MACROPHAGE.windupSeconds;
+}
+
+function moveMacrophage(enemy, targetAngle, speed, dt, turnTarget = targetAngle, turnRate = MACROPHAGE.turnSpeed) {
   // Sample headings ahead and beside obstacles. No pathfinding grid or pixel reads.
   const lookahead = 95 + speed*0.35;
   let best = null;
   for (const offset of [0,.4,-.4,.85,-.85,1.35,-1.35,1.9,-1.9,Math.PI]) {
     const angle = targetAngle+offset;
-    const point = {x:enemy.x+Math.cos(angle)*lookahead, y:enemy.y+Math.sin(angle)*lookahead};
+    const probePose = {...enemy, x:enemy.x+Math.cos(angle)*lookahead, y:enemy.y+Math.sin(angle)*lookahead};
     // Movable objects are pushed; only the protected infection target is routed around.
-    const clearance = macrophageClearance(point,true);
-    const score = Math.cos(offset)*2 + Math.min(160,clearance-MACROPHAGE.radius)/90
-      - (clearance<MACROPHAGE.radius+12 ? 20 : 0);
-    if (!best || score>best.score) best = {angle,score,clearance};
+    const clearance = macrophageClearance(probePose,true);
+    const score = Math.cos(offset)*2 + Math.min(160,clearance)/90
+      - (clearance<12 ? 20 : 0);
+    if (!best || score>best.score) best = {angle,score,clearance,offset};
   }
-  if (!best || best.clearance<MACROPHAGE.radius+8) { enemy.vx=0; enemy.vy=0; return; }
-  const delta = Math.atan2(Math.sin(best.angle-enemy.rotation),Math.cos(best.angle-enemy.rotation));
-  enemy.rotation += clamp(delta,-MACROPHAGE.turnSpeed*dt,MACROPHAGE.turnSpeed*dt);
-  pushMacrophageObjects(enemy,best.angle,dt);
+  if (!best || best.clearance<4) { enemy.vx=0; enemy.vy=0; return; }
+  const desiredHeading = best.offset === 0 ? turnTarget : best.angle;
+  const delta = Math.atan2(Math.sin(desiredHeading-enemy.rotation),Math.cos(desiredHeading-enemy.rotation));
+  enemy.rotation += clamp(delta,-turnRate*dt,turnRate*dt);
   // Translation follows the selected heading, allowing a broad cell to slide past obstacles.
   enemy.vx = Math.cos(best.angle)*speed; enemy.vy = Math.sin(best.angle)*speed;
-  const point = {x:enemy.x+enemy.vx*dt,y:enemy.y+enemy.vy*dt};
-  if (macrophageClearance(point)>=MACROPHAGE.radius+3) {enemy.x=point.x;enemy.y=point.y;}
+  const nextPose = {...enemy, x:enemy.x+enemy.vx*dt, y:enemy.y+enemy.vy*dt};
+  if (macrophageClearance(nextPose,true)>=0) {enemy.x=nextPose.x;enemy.y=nextPose.y;}
   else {enemy.vx=0;enemy.vy=0;}
+  pushMacrophageObjects(enemy,best.angle,dt);
+}
+
+function macrophageProbeSurface(enemy, probe) {
+  const surface = spriteSurface(enemy, probe);
+  if (!surface) return null;
+  // Carve an open funnel through the upper/lower jaw lobes so the 102px-tall phage
+  // can enter the phagocytic cup without bouncing off the jaw tips, while keeping
+  // an inner back wall in front of the nucleus.
+  const s = enemy.scale / MACROPHAGE.scale;
+  const local = worldToLocal(enemy.x, enemy.y, enemy.rotation, probe.x, probe.y);
+  const lx = local.x / s, ly = local.y / s;
+  const cx = clamp(lx, 150, 280);
+  const dx = (lx - cx) * 1.1;
+  const distAxis = Math.hypot(dx, ly);
+  const funnelRadius = 94 + Math.max(0, lx - 150) * 0.45;
+  const dCorridor = (funnelRadius - distAxis) * s;
+  const dBack = (lx - 116) * s;
+  const dCavity = Math.min(dCorridor, dBack);
+  if (dCavity <= surface.distance) return surface;
+  let cnx = 1, cny = 0;
+  if (dCorridor < dBack) {
+    if (distAxis > 1e-5) { cnx = -dx / distAxis; cny = -ly / distAxis; }
+    else { cnx = 0; cny = ly >= 0 ? -1 : 1; }
+  }
+  return { distance: dCavity, normal: rotatePoint(cnx, cny, enemy.rotation) };
+}
+
+function applyMacrophageMouthPull(enemy, dt) {
+  if (macrophageGrace > 0) return;
+  const mouth = macrophageMouth(enemy);
+  const dx = mouth.x - player.x, dy = mouth.y - player.y;
+  const mouthDistance = Math.hypot(dx, dy);
+  if (mouthDistance >= MACROPHAGE.suctionRadius) return;
+  const s = enemy.scale / MACROPHAGE.scale;
+  const local = worldToLocal(enemy.x, enemy.y, enemy.rotation, player.x, player.y);
+  if (local.x <= 65 * s) return;
+  const falloff = 1 - smoothstep(0, MACROPHAGE.suctionRadius, mouthDistance);
+  const accel = (enemy.mode === 'close' ? 260 : enemy.mode === 'windup' ? 185 : 140) * falloff;
+  const drift = (enemy.mode === 'close' ? 55 : enemy.mode === 'windup' ? 36 : 26) * falloff;
+  const ux = dx / (mouthDistance || 1), uy = dy / (mouthDistance || 1);
+  player.vx += ux * accel * dt;
+  player.vy += uy * accel * dt;
+  player.x += ux * drift * dt;
+  player.y += uy * drift * dt;
+  if (enemy.mode === 'close' && mouthDistance < MACROPHAGE.captureRadius * 0.75) {
+    const damp = Math.exp(-2.8 * dt);
+    player.vx *= damp;
+    player.vy *= damp;
+  }
 }
 
 function resolveMacrophageContact(enemy) {
   if (macrophageGrace>0) return;
-  // Only the membrane pushes. The open cup remains enterable during capture.
+  // Only the outer membrane and the inner cup back-wall push; the open mouth funnel remains enterable.
   for (let i=0;i<3;i++) {
     let contact = null;
     for (const probe of getPlayerCollisionProbes()) {
-      const surface = spriteSurface(enemy,probe);
+      const surface = macrophageProbeSurface(enemy,probe);
       if (!surface) continue;
       const penetration = probe.r-surface.distance;
       if (penetration>0 && (!contact || penetration>contact.penetration)) contact={...surface,penetration};
@@ -211,12 +305,17 @@ function updateMacrophages(dt) {
     enemy.age+=dt;enemy.elapsed+=dt;enemy.cooldown=Math.max(0,enemy.cooldown-dt);
     const distance=Math.hypot(player.x-enemy.x,player.y-enemy.y);
     const angle=Math.atan2(player.y-enemy.y,player.x-enemy.x);
+    const delta=Math.atan2(Math.sin(angle-enemy.rotation),Math.cos(angle-enemy.rotation));
     if (macrophageGrace>0) {
       if(enemy.mode!=='patrol') changeMacrophageMode(enemy,'patrol');
       enemy.capture=0;continue;
     }
+    const initialMouth=macrophageMouth(enemy);
+    const initialMouthDist=Math.hypot(player.x-initialMouth.x,player.y-initialMouth.y);
     if (enemy.mode==='patrol') {
-      if (distance<MACROPHAGE.detection && enemy.cooldown===0) {
+      if (initialMouthDist<MACROPHAGE.windupRadius) {
+        startMacrophageWindup(enemy);
+      } else if (distance<MACROPHAGE.detection && enemy.cooldown===0) {
         changeMacrophageMode(enemy,'chase');
         toastMessage='¡Macrófago cerca! Aléjate de sus prolongaciones.';toastTimer=3;
       } else {
@@ -229,33 +328,60 @@ function updateMacrophages(dt) {
       if(enemy.lost>=MACROPHAGE.lostSeconds || Math.hypot(enemy.x-enemy.home.x,enemy.y-enemy.home.y)>1500) {
         changeMacrophageMode(enemy,'return');enemy.cooldown=5;
       } else {
-        moveMacrophage(enemy,angle,MACROPHAGE.chaseSpeed,dt);
+        const turnRate = MACROPHAGE.turnSpeed * (distance < 340 && Math.abs(delta) > 0.5 ? 1.3 : 1);
+        let moveAngle = angle, speed = MACROPHAGE.chaseSpeed;
+        if (distance < 340 && Math.abs(delta) < 1.05) {
+          // Guide the phagocytic cup itself onto the phage rather than the cell's centre.
+          moveAngle = Math.atan2(player.y - initialMouth.y, player.x - initialMouth.x);
+          speed = Math.min(MACROPHAGE.chaseSpeed, Math.max(45, initialMouthDist * 2.2));
+        } else if (distance < 320) {
+          // Pivot the mouth toward a nearby phage instead of body-ramming with the back or side.
+          speed = MACROPHAGE.chaseSpeed * Math.max(0.12, (Math.cos(delta) + 1) * 0.35);
+        }
+        moveMacrophage(enemy, moveAngle, speed, dt, angle, turnRate);
         const mouth=macrophageMouth(enemy);
-        if(Math.hypot(player.x-mouth.x,player.y-mouth.y)<100) {
-          changeMacrophageMode(enemy,'windup');
-          toastMessage='¡Va a cerrar! Escapa por un costado.';toastTimer=MACROPHAGE.windupSeconds;
+        if(Math.hypot(player.x-mouth.x,player.y-mouth.y)<MACROPHAGE.windupRadius) {
+          startMacrophageWindup(enemy);
         }
       }
     } else if (enemy.mode==='windup') {
-      // Lock the attack direction: the warning describes exactly where closure happens.
-      if(enemy.elapsed>=MACROPHAGE.windupSeconds) changeMacrophageMode(enemy,'close');
+      // Gently track and advance the open cup while warning where closure happens.
+      if (initialMouthDist > 18 && Math.abs(delta) < 1.2) {
+        const moveAngle = Math.atan2(player.y - initialMouth.y, player.x - initialMouth.x);
+        const lungeSpeed = Math.min(MACROPHAGE.chaseSpeed * 0.36, initialMouthDist * 1.6);
+        moveMacrophage(enemy, moveAngle, lungeSpeed, dt, angle, MACROPHAGE.turnSpeed * 0.35);
+      } else {
+        enemy.rotation += clamp(delta, -MACROPHAGE.turnSpeed * 0.35 * dt, MACROPHAGE.turnSpeed * 0.35 * dt);
+        enemy.vx = 0; enemy.vy = 0;
+      }
+      if(enemy.elapsed>=MACROPHAGE.windupSeconds) {
+        const mouth=macrophageMouth(enemy);
+        const inside=Math.hypot(player.x-mouth.x,player.y-mouth.y)<MACROPHAGE.captureRadius*0.85;
+        changeMacrophageMode(enemy,'close');
+        if(inside) enemy.capture=0.06;
+      }
     } else if (enemy.mode==='close') {
       const mouth=macrophageMouth(enemy);
-      enemy.capture=Math.hypot(player.x-mouth.x,player.y-mouth.y)<MACROPHAGE.captureRadius?enemy.capture+dt:0;
-      if(macrophagePose(enemy).captureReady && enemy.capture>=MACROPHAGE.captureSeconds) {captureByMacrophage(enemy);return;}
+      const mouthDistance=Math.hypot(player.x-mouth.x,player.y-mouth.y);
+      enemy.capture=mouthDistance<MACROPHAGE.captureRadius?enemy.capture+dt:Math.max(0,enemy.capture-dt*0.5);
+      if(mouthDistance<MACROPHAGE.captureRadius && ((macrophagePose(enemy).captureReady && enemy.capture>=MACROPHAGE.captureSeconds) || (enemy.elapsed>=MACROPHAGE.closeSeconds && mouthDistance<MACROPHAGE.captureRadius*0.85))) {
+        captureByMacrophage(enemy);return;
+      }
       if(enemy.elapsed>=MACROPHAGE.closeSeconds) changeMacrophageMode(enemy,'recover');
     } else if (enemy.mode==='recover') {
-      if(enemy.elapsed>=MACROPHAGE.recoverySeconds) {changeMacrophageMode(enemy,'chase');enemy.lost=0;}
+      if(enemy.elapsed>=0.75 && initialMouthDist<MACROPHAGE.windupRadius) startMacrophageWindup(enemy);
+      else if(enemy.elapsed>=MACROPHAGE.recoverySeconds) {changeMacrophageMode(enemy,'chase');enemy.lost=0;}
     } else if (enemy.mode==='return') {
-      const homeDistance=Math.hypot(enemy.x-enemy.home.x,enemy.y-enemy.home.y);
-      if(homeDistance<90) {changeMacrophageMode(enemy,'patrol');enemy.lost=0;}
-      else moveMacrophage(enemy,Math.atan2(enemy.home.y-enemy.y,enemy.home.x-enemy.x),MACROPHAGE.patrolSpeed*1.4,dt);
+      if(initialMouthDist<MACROPHAGE.windupRadius) startMacrophageWindup(enemy);
+      else {
+        const homeDistance=Math.hypot(enemy.x-enemy.home.x,enemy.y-enemy.home.y);
+        if(homeDistance<90) {changeMacrophageMode(enemy,'patrol');enemy.lost=0;}
+        else moveMacrophage(enemy,Math.atan2(enemy.home.y-enemy.y,enemy.home.x-enemy.x),MACROPHAGE.patrolSpeed*1.4,dt);
+      }
     }
+    applyMacrophageMouthPull(enemy, dt);
     enemy.sprite=macrophagePose(enemy).body;
-    // The cup sensor owns containment while closing. The solid closed membrane
-    // must not push its occupant out before the sustained-capture check finishes.
-    const mouth=macrophageMouth(enemy);
-    if(enemy.mode!=='close' || Math.hypot(player.x-mouth.x,player.y-mouth.y)>=MACROPHAGE.captureRadius) resolveMacrophageContact(enemy);
+    resolveMacrophageContact(enemy);
   }
 }
 
@@ -263,21 +389,18 @@ function captureByMacrophage(enemy) {
   if(gameMode!==GameMode.HARD || state!==State.SEARCH || macrophageGrace>0) return;
   macrophageGameOver={enemy,player:{...player},mouth:macrophageMouth(enemy)};
   player.vx=0;player.vy=0;clearBubbleEnergy();clearHeldInputs();
-  soundEffects.stopAll();playSound('partida_tiempo_agotado',{volume:.65});
+  soundEffects.stopAll();playSound('macrofago_captura',{volume:.6, maxDelay:1000});
   setState(State.GAME_OVER);
   menuButton.classList.add('hidden');
 }
 
-function macrophageFrames(enemy) {
-  if(enemy.mode==='windup') return ['macrofago_idle','macrofago_reach',smoothstep(0,.4,enemy.elapsed)];
-  if(enemy.mode==='close') return ['macrofago_reach','macrofago_closed',smoothstep(0,MACROPHAGE.closeSeconds,enemy.elapsed)];
-  if(enemy.mode==='recover') return ['macrofago_closed','macrofago_idle',smoothstep(.3,MACROPHAGE.recoverySeconds,enemy.elapsed)];
-  return ['macrofago_idle','macrofago_reach',.1+.08*Math.sin(enemy.age*2.5)];
-}
-
 function macrophagePose(enemy) {
-  const [from,to,mix]=macrophageFrames(enemy);
-  return {from,to,mix,body:mix<.5?from:to,captureReady:enemy.mode==='close' && mix>=.85};
+  let body = 'macrofago_idle';
+  if (enemy.mode === 'windup') body = enemy.elapsed < 0.12 ? 'macrofago_idle' : 'macrofago_reach';
+  else if (enemy.mode === 'close') body = enemy.elapsed < 0.16 ? 'macrofago_reach' : 'macrofago_closed';
+  else if (enemy.mode === 'recover') body = enemy.elapsed < 0.45 ? 'macrofago_closed' : 'macrofago_idle';
+  const mix = enemy.mode === 'close' ? smoothstep(0, MACROPHAGE.closeSeconds, enemy.elapsed) : 0;
+  return { body, mix, captureReady: enemy.mode === 'close' && mix >= 0.65 };
 }
 
 let debugMacrophageCollision = false;
@@ -299,20 +422,11 @@ function drawMacrophages() {
   if(gameMode!==GameMode.HARD) return;
   for(const enemy of macrophages) {
     if(!isVisibleWorld(enemy.x,enemy.y,600)) continue;
-    const {from,to,mix,body}=macrophagePose(enemy);
+    const {body}=macrophagePose(enemy);
     if(state===State.SEARCH && macrophageGrace===0 && isNearWorldElement(enemy)) {
       drawSilhouetteGlow(body,enemy.x,enemy.y,enemy.scale,enemy.rotation);
     }
-    // One reusable raster, with additive premultiplied alpha, makes the old cup
-    // disappear correctly without dimming shared body pixels or retaining ghost lobes.
-    if(!macrophageBlendLayer) macrophageBlendLayer=createLayer(512,512);
-    const blend=macrophageBlendLayer.getContext('2d');
-    blend.clearRect(0,0,512,512);blend.save();
-    blend.globalAlpha=1-mix;
-    blend.drawImage(img[from],0,0,512,512);
-    blend.globalCompositeOperation='lighter';blend.globalAlpha=mix;
-    blend.drawImage(img[to],0,0,512,512);blend.restore();
-    drawImageCenter(macrophageBlendLayer,enemy.x,enemy.y,enemy.scale*img[from].width/512,enemy.rotation);
+    drawImageCenter(img[body],enemy.x,enemy.y,enemy.scale,enemy.rotation);
     if(debugMacrophageCollision) drawMacrophageCollision(enemy);
     if(state===State.SEARCH && enemy.mode==='windup') {
       const mouth=macrophageMouth(enemy);

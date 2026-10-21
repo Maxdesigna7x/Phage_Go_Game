@@ -19,7 +19,7 @@ const storyIntroCaption = document.getElementById("storyIntroCaption");
 const displayNotice = document.getElementById("displayNotice");
 const retryLoadingButton = document.getElementById("retryLoadingButton");
 const loadingStatus = document.getElementById("loadingStatus");
-const BUILD_VERSION = "20261020-53";
+const BUILD_VERSION = "20261020-58";
 const STORY_INTRO_FADE_MS = 260;
 const SIMULATION_STEP = 1 / 60;
 const MAX_FRAME_SECONDS = 0.25; // Discard long stalls equally for gameplay and its clocks.
@@ -325,23 +325,30 @@ async function loadImages() {
     }
     loadingStatus.textContent = `Cargando imágenes… ${++completed}/${entries.length}`;
   };
-  const loadGroup = async (group, priority) => {
+  const loadGroup = async (group) => {
     let cursor = 0;
     const results = await Promise.allSettled(Array.from({ length: Math.min(4, group.length) }, async () => {
-      while (cursor < group.length) await loadEntry(group[cursor++], priority);
+      while (cursor < group.length) {
+        const [entry, priority] = group[cursor++];
+        await loadEntry(entry, priority);
+      }
     }));
     const failed = results.find(result => result.status === 'rejected');
     if (failed) throw failed.reason;
   };
   // On portrait entry, finish the visible orientation background before the menu.
   const portraitEntry = window.innerWidth < window.innerHeight;
-  if (portraitEntry) await loadGroup(entries.filter(([key]) => key === 'story'), 'high');
+  if (portraitEntry) await loadGroup(entries.filter(([key]) => key === 'story').map(entry => [entry, 'high']));
   // Paint each menu asset as it arrives, even if another menu image is slow.
-  await loadGroup(entries.filter(([key]) => MENU_ASSETS.includes(key)), 'high');
+  await loadGroup(entries.filter(([key]) => MENU_ASSETS.includes(key)).map(entry => [entry, 'high']));
+  document.documentElement?.classList?.add('fonts-ready');
   // Paint the actual menu while the remaining assets load; play stays disabled.
   drawIntro();
-  await loadGroup(entries.filter(([key]) => EARLY_ASSETS.includes(key)), 'high');
-  await loadGroup(entries.filter(([key]) => !MENU_ASSETS.includes(key) && !EARLY_ASSETS.includes(key) && !(portraitEntry && key === 'story')), 'low');
+  const earlySet = new Set(EARLY_ASSETS);
+  await loadGroup([
+    ...entries.filter(([key]) => earlySet.has(key)).map(entry => [entry, 'high']),
+    ...entries.filter(([key]) => !MENU_ASSETS.includes(key) && !earlySet.has(key) && !(portraitEntry && key === 'story')).map(entry => [entry, 'low']),
+  ]);
 }
 
 
@@ -349,14 +356,18 @@ async function bootstrapGame() {
   if (loadingInProgress || gameReady) return;
   loadingInProgress = true;
   normalButton.disabled = hardButton.disabled = true;
+  menuButtons.classList.add('hidden');
   retryLoadingButton.classList.add('hidden');
   loadingStatus.textContent = 'Cargando imágenes…';
   try {
-    // Fonts are decorative; an unavailable font must not hold up the game.
-    const fonts = document.fonts ? Promise.allSettled([
-      document.fonts.load('400 32px "Lilita One"'), document.fonts.load('800 24px Nunito'),
-    ]) : Promise.resolve();
-    await Promise.all([loadImages(), Promise.race([fonts, new Promise(resolve=>setTimeout(resolve,1500))])]);
+    await loadImages();
+    // Fonts are decorative; load them after initial backgrounds so they never preempt Story/Intro_back_V2.
+    if (document.fonts) {
+      await Promise.race([
+        Promise.allSettled([document.fonts.load('400 32px "Lilita One"'), document.fonts.load('800 24px Nunito')]),
+        new Promise(resolve => setTimeout(resolve, 1500)),
+      ]);
+    }
     init();
     loading.classList.add('hidden');
     normalButton.disabled = hardButton.disabled = false;
@@ -364,14 +375,17 @@ async function bootstrapGame() {
   } catch (error) {
     loadingStatus.textContent = `${error.message}. Comprueba la conexión y vuelve a intentarlo.`;
     retryLoadingButton.classList.remove('hidden');
-  } finally { loadingInProgress = false; }
+  } finally {
+    document.documentElement?.classList?.add('fonts-ready');
+    loadingInProgress = false;
+  }
 }
 
 function init() {
   rebuildRenderCaches();
   initAmbientLife();
-  resetGame();
   gameReady = true;
+  resetGame();
 }
 
 function startStoryIntro(mode) {
@@ -455,7 +469,7 @@ function resetGame() {
   poppedBubbles.clear();
   clearHeldInputs();
   resetCycleState(330, 470, 0.65);
-  menuButtons.classList.remove("hidden");
+  menuButtons.classList.toggle("hidden", !gameReady);
   menuButton.classList.add("hidden");
   restartButton.classList.add("hidden");
 }
@@ -791,7 +805,7 @@ function setState(next) {
   if (previous === State.INJECTION && next === State.DNA_REPLICATION) { playSound("adn_inyeccion_completa"); playSound("bacteria_entrar", {volume:0.35}); }
 
   if (next === State.SEARCH && previous !== State.SEARCH) protectFromMacrophages();
-  if (next !== State.SEARCH) resetJoystick();
+  if (next !== State.SEARCH) { resetJoystick(); stopMacrophageSounds(); }
   stateTime = 0;
   if (next !== State.INTRO) menuButtons.classList.add("hidden");
   menuButton.classList.toggle("hidden", next === State.INTRO);
@@ -1142,6 +1156,7 @@ function createNucleotideGame(dna) {
     slots: sequence.map((code, i) => ({ code, x: 500 + i * 150, y: 500, filled: false })),
     nucleotides: itemCodes.map((code, i) => makeDrag("nucleotide", code, 520 + i * 155, 760)),
     selectedSortIndex: null,
+    sortSuccessRemaining: null,
     memoryPhase: "show",
     memoryIndex: 0,
     memoryTimer: 0.68,
@@ -1166,6 +1181,11 @@ function shuffleValuesWithNoMatches(values) {
 }
 
 function updateNucleotideMinigame(dt) {
+  if (nucleotideGame.sortSuccessRemaining != null) {
+    nucleotideGame.sortSuccessRemaining = Math.max(0, nucleotideGame.sortSuccessRemaining - dt);
+    if (nucleotideGame.sortSuccessRemaining <= 1e-9) completeNucleotideGame();
+    return;
+  }
   if (nucleotideGame.messageTimer > 0) nucleotideGame.messageTimer -= dt;
   syncNucleotideLayout();
   if (nucleotideGame.type === "drag") {
@@ -1259,6 +1279,7 @@ function submitMemoryChoice(code) {
 }
 
 function updateSortNucleotideGame() {
+  if (nucleotideGame.sortSuccessRemaining != null) return;
   const items = nucleotideGame.nucleotides;
   if (mouse.justDown && !dragItem) {
     const index = items.findIndex(item => hit(mouse, item.x, item.y, 60));
@@ -1302,7 +1323,7 @@ function updateSortNucleotideGame() {
 }
 
 function selectSortNucleotide(index) {
-  if (!nucleotideGame || nucleotideGame.type !== "sort") return;
+  if (!nucleotideGame || nucleotideGame.type !== "sort" || nucleotideGame.sortSuccessRemaining != null) return;
   if (nucleotideGame.selectedSortIndex === null) {
     nucleotideGame.selectedSortIndex = index;
     return;
@@ -1318,6 +1339,7 @@ function selectSortNucleotide(index) {
 }
 
 function swapSortItems(a, b) {
+  if (!nucleotideGame || nucleotideGame.sortSuccessRemaining != null) return;
   if (a < 0 || b < 0 || a === b) return;
   [nucleotideGame.nucleotides[a].code, nucleotideGame.nucleotides[b].code] =
     [nucleotideGame.nucleotides[b].code, nucleotideGame.nucleotides[a].code];
@@ -1326,11 +1348,16 @@ function swapSortItems(a, b) {
 }
 
 function checkSortedNucleotides() {
-  if (!nucleotideGame || nucleotideGame.type !== "sort") return;
+  if (!nucleotideGame || nucleotideGame.type !== "sort" || nucleotideGame.sortSuccessRemaining != null) return;
   if (nucleotideGame.nucleotides.every((item, index) => item.code === nucleotideGame.sequence[index])) {
     learnTutorial("nucleotide-sort");
     playSound("nucleotido_encajar");
-    completeNucleotideGame();
+    nucleotideGame.sortSuccessRemaining = 0.5;
+    nucleotideGame.progress = nucleotideGame.sequence.length;
+    nucleotideGame.selectedSortIndex = null;
+    nucleotideGame.messageTimer = 0;
+    keyboardSelection = null;
+    for (const slot of nucleotideGame.slots) slot.filled = true;
   } else {
     showNucleotideMessage("Sigue intercambiando las letras.", false);
   }
@@ -1567,6 +1594,7 @@ function updateLysis(dt, taps = spaceTap ? 1 : 0) {
       });
     }
     spawnParticle(W * 0.5, H * 0.52, "#d9ef80", 96);
+    spawnLysisCelebration();
   }
   if (lysis.burst) {
     lysis.burstTime += dt;
@@ -2048,7 +2076,8 @@ function drawSearchWorld() {
   ctx.translate(-camera.x, -camera.y);
   drawMapBackdrop();
   drawMacrophages();
-  drawGlow(player.x, player.y, "cyan", 0.65);
+  if (state === State.SEARCH && bubbleStats.energy > 0) drawEnergyPhageGlow();
+  else drawGlow(player.x, player.y, "cyan", 0.65);
   drawPhageFrame(player.x, player.y, player.scale, player.rotation, getPlayerFrameIndex());
   ctx.restore();
 }
@@ -2181,9 +2210,9 @@ function drawNucleotideMinigame() {
     drawTextCentered("OBJETIVO", safeCenterX(), layout.slotsY - 60, layout.compact ? 20 : 24, "#b8ebff", "900");
     drawNucleotideSequence(layout, nucleotideGame.sequence.length, layout.slotsY, true);
     drawPanel(layout.trayX, layout.trayY, layout.trayW, layout.trayH, 0.5);
-    drawTextCentered("Tus fichas · toca dos para intercambiarlas", safeCenterX(), layout.trayTitleY, layout.compact ? 16 : 21, "#fff", "900");
+    drawTextCentered(nucleotideGame.sortSuccessRemaining != null ? "¡Secuencia ordenada!" : "Tus fichas · toca dos para intercambiarlas", safeCenterX(), layout.trayTitleY, layout.compact ? 16 : 21, "#fff", "900");
     for (const [i, n] of nucleotideGame.nucleotides.entries()) {
-      drawNucleotideButton(n, layout, i === nucleotideGame.selectedSortIndex);
+      drawNucleotideButton(n, layout, nucleotideGame.sortSuccessRemaining != null || i === nucleotideGame.selectedSortIndex);
       drawImageCenter(getNucleotideImage(n.code), n.x, n.y, layout.nucleotideScale, n.dragging ? 0.12 : 0);
     }
   } else if (nucleotideGame.type === "memory") {
@@ -2925,14 +2954,17 @@ function clearBubbleEnergy() {
 }
 
 function registerBubblePop() {
-  const wasActive=bubbleStats.energy>0;
   bubbleStats.total++;
-  bubbleStats.popAge = 0;
-  bubbleStats.combo = bubbleStats.energy > 0 ? 10 : bubbleStats.cooldown > 0 ? Math.min(10, bubbleStats.combo + 1) : 1;
-  bubbleStats.cooldown = BUBBLE_COMBO_WINDOW;
-  if (bubbleStats.energy > 0 || bubbleStats.combo >= 10) bubbleStats.energy = ENERGY_SECONDS;
   playSound("burbuja_explotar", {volume:0.25});
-  if (bubbleStats.energy>0) playSound(wasActive ? "energia_renovar" : "energia_activar", {volume:0.45});
+  // Pops still count toward the total, but the active boost cannot be renewed.
+  if (bubbleStats.energy > 0) return;
+  bubbleStats.popAge = 0;
+  bubbleStats.combo = bubbleStats.cooldown > 0 ? Math.min(10, bubbleStats.combo + 1) : 1;
+  bubbleStats.cooldown = BUBBLE_COMBO_WINDOW;
+  if (bubbleStats.combo >= 10) {
+    bubbleStats.energy = ENERGY_SECONDS;
+    playSound("energia_activar", {volume:0.45});
+  }
 }
 
 function updateBubbleEnergy(dt) {
@@ -2941,7 +2973,9 @@ function updateBubbleEnergy(dt) {
   bubbleStats.popAge += dt;
   bubbleStats.cooldown = Math.max(0, bubbleStats.cooldown - dt);
   bubbleStats.energy = Math.max(0, bubbleStats.energy - dt);
-  if (bubbleStats.cooldown === 0 && bubbleStats.energy === 0) bubbleStats.combo = 0;
+  if ((hadEnergy || bubbleStats.cooldown === 0) && bubbleStats.energy === 0) {
+    bubbleStats.combo = 0; bubbleStats.cooldown = 0;
+  }
   if(hadEnergy && bubbleStats.energy===0) playSound("energia_terminar", {volume:0.35});
   else if(hadCombo && bubbleStats.combo===0) playSound("burbuja_racha_fin", {volume:0.2});
 }
@@ -2978,7 +3012,7 @@ function drawEnergyEffect() {
   ctx.save();
   ctx.globalAlpha = Math.min(1, bubbleStats.energy) * (0.8 + 0.12 * Math.sin(worldTime * 3));
   ctx.drawImage(layers.energyVignette, 0, 0, W, H);
-  ctx.strokeStyle = "rgba(152, 255, 235, 0.4)"; ctx.lineWidth = 2;
+  ctx.strokeStyle = "rgba(152, 255, 235, 0.7)"; ctx.lineWidth = 3;
   for (let i = 0; i < 8; i++) {
     const y = (worldTime * 190 + i * H / 8) % H;
     const x = i % 2 ? W - 25 : 25;
@@ -2998,8 +3032,31 @@ function buildSilhouetteGlows() {
   layers.energyVignette = createLayer(320, 180);
   const c = layers.energyVignette.getContext("2d");
   const g = c.createRadialGradient(160, 90, 40, 160, 90, 180);
-  g.addColorStop(0, "rgba(88,255,219,0)"); g.addColorStop(0.6, "rgba(88,255,219,0.015)"); g.addColorStop(1, "rgba(88,255,219,0.3)");
+  g.addColorStop(0, "rgba(51,255,218,0)"); g.addColorStop(0.48, "rgba(51,255,218,0.08)"); g.addColorStop(0.78, "rgba(51,255,218,0.45)"); g.addColorStop(1, "rgba(51,255,218,0.8)");
   c.fillStyle = g; c.fillRect(0, 0, 320, 180);
+  const sides = c.createLinearGradient(0, 0, 320, 0);
+  sides.addColorStop(0, "rgba(51,255,218,0.55)"); sides.addColorStop(0.16, "rgba(51,255,218,0)");
+  sides.addColorStop(0.84, "rgba(51,255,218,0)"); sides.addColorStop(1, "rgba(51,255,218,0.55)");
+  c.fillStyle = sides; c.fillRect(0, 0, 320, 180);
+  // Cache each sprite-frame halo once; no per-frame blur or pixel reads.
+  layers.energyPhageFrames = Array.from({length:4}, (_, frame) => {
+    const halo = createLayer(224, 224), h = halo.getContext("2d");
+    h.drawImage(img.phageSprite, frame%2*1024, Math.floor(frame/2)*1024, 1024, 1024, 32, 32, 160, 160);
+    h.globalCompositeOperation = "source-in"; h.fillStyle = "#45ffdc"; h.fillRect(0, 0, 224, 224);
+    const blurred = createLayer(224, 224), b = blurred.getContext("2d");
+    b.shadowColor = "#45ffdc"; b.shadowBlur = 13;
+    b.drawImage(halo, 0, 0); b.drawImage(halo, 0, 0);
+    return blurred;
+  });
+}
+
+function drawEnergyPhageGlow() {
+  const halo = layers.energyPhageFrames[getPlayerFrameIndex()];
+  const size = 224 / 160 * 1024 * 0.458 * player.scale;
+  ctx.save(); ctx.translate(player.x, player.y); ctx.rotate(player.rotation);
+  ctx.globalAlpha = Math.min(1, bubbleStats.energy) * (0.8 + 0.1 * Math.sin(worldTime * 4));
+  ctx.drawImage(halo, -size/2, -size/2, size, size);
+  ctx.restore();
 }
 
 // Build halos in CSS pixels so their thickness is independent of sprite size,
@@ -3230,9 +3287,25 @@ function spawnParticle(x, y, color, count) {
   }
 }
 
+function spawnLysisCelebration() {
+  // A small local spray, behind the HUD, rather than a screen-wide celebration.
+  const colors = ["#ffe68a", "#70ffe0", "#fff7cc"];
+  const count = 36;
+  if (particles.length + count + 1 > QUALITY.particlesMax) particles.splice(0, particles.length + count + 1 - QUALITY.particlesMax);
+  particles.push({kind:"victoryRing", x:W*.5, y:H*.52, vx:0, vy:0, life:.8, max:.8, r:30, color:colors[0]});
+  for (let i=0; i<count; i++) {
+    const angle = i * Math.PI * 2 / count + rand(-.08,.08), speed = rand(110,260), life = rand(1.1,1.8);
+    particles.push({kind:"victorySpark", x:W*.5+rand(-160,160), y:H*.52+rand(-45,45),
+      vx:Math.cos(angle)*speed, vy:Math.sin(angle)*speed, life, max:life,
+      r:rand(3,6), rotation:rand(0,Math.PI), spin:rand(-3,3), color:colors[i%colors.length]});
+  }
+}
+
 function updateParticles(dt) {
   particles = particles.filter(p => {
     p.life -= dt;
+    if (p.kind === "victorySpark") { p.vy += 55 * dt; p.rotation += p.spin * dt; }
+    if (p.kind === "victoryRing") p.r += 230 * dt;
     p.x += p.vx * dt;
     p.y += p.vy * dt;
     p.vx *= Math.pow(0.96, dt * 60);
@@ -3245,7 +3318,14 @@ function drawParticles() {
   ctx.save();
   for (const p of particles) {
     ctx.globalAlpha = clamp(p.life / p.max, 0, 1);
-    if (p.kind === "bubble") {
+    if (p.kind === "victoryRing") {
+      ctx.globalAlpha *= .5; ctx.strokeStyle = p.color; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.ellipse(p.x, p.y, p.r*1.8, p.r*.7, 0, 0, Math.PI*2); ctx.stroke();
+    } else if (p.kind === "victorySpark") {
+      ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(p.rotation); ctx.fillStyle = p.color;
+      const r = p.r * (.7 + .3 * Math.sin(p.life*8)**2);
+      ctx.beginPath(); ctx.moveTo(0,-r*1.7); ctx.lineTo(r*.45,0); ctx.lineTo(0,r*1.7); ctx.lineTo(-r*.45,0); ctx.closePath(); ctx.fill(); ctx.restore();
+    } else if (p.kind === "bubble") {
       if (![State.SEARCH, State.ADSORPTION, State.ESCAPE].includes(state)) continue;
       const point = worldToScreen(p.x, p.y);
       const radius = p.r * (camera.zoom || 1);

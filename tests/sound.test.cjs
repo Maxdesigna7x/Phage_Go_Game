@@ -23,7 +23,7 @@ function engine() {
   return {sound:sandbox.window.engine,sandbox,storage,sources,downloads};
 }
 test('all catalog entries are effects and prefer the smallest existing compressed format',()=>{
-  const {sound}=engine();assert.equal(sound.catalog.length,58);
+  const {sound}=engine();assert.equal(sound.catalog.length,63);
   assert.equal(new Set(sound.catalog.map(s=>s.id)).size,sound.catalog.length);
   for(const entry of sound.catalog){
     assert.ok(!entry.id.startsWith('ambiente_'));
@@ -136,4 +136,20 @@ test('stopping groups and returning to menu cancels pending one-shots as well as
   await Promise.resolve();sound.stop('ui_pulsar');sound.stopAll();
   finish({duration:1});await Promise.all(requests);
   assert.equal(sources.length,0);assert.equal(sound.pending.size,0);assert.equal(sound.loops.size,0);
+});
+
+
+test('file opening decodes bundled audio without fetching local files',async()=>{
+  const {sound,sandbox,sources}=engine();await sound.ready;
+  vm.runInContext(fs.readFileSync(path.join(root,'audio/local-data.js'),'utf8'),sandbox);
+  sandbox.window.location={protocol:'file:'};sandbox.atob=atob;
+  sandbox.fetch=()=>{throw new Error('file fetch must not be used');};
+  for(const entry of sound.catalog){
+    const bundled=Buffer.from(sandbox.window.SOUND_LOCAL_DATA[entry.id],'base64');
+    assert.deepEqual(bundled,fs.readFileSync(path.join(root,'audio/sonidos/web',entry.id+'.mp3')));
+  }
+  await sound.play('nucleotido_encajar');assert.equal(sources.length,1);
+  await sound.loadSettings();assert.equal(sound.disabled.size,0);
+  sound.apply({disabled:['ui_pulsar']});
+  await sound.play('ui_pulsar');assert.equal(sources.length,1);
 });

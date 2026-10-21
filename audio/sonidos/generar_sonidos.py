@@ -274,7 +274,39 @@ def one_shot(name: str, data: np.ndarray) -> None:
     save_wav(name, short_reverb(data, .10))
 
 
+def make_macrophage_effects() -> None:
+    """Short organic cues; independent of the existing pack's random sequence."""
+    global RNG
+    previous_rng = RNG
+    RNG = np.random.default_rng(20261020)
+    MASTER.mkdir(parents=True, exist_ok=True)
+    WEB.mkdir(parents=True, exist_ok=True)
+    out = np.zeros((round(.62*SR), 2))
+    for pos, pitch in ((0, 196), (.23, 233)):
+        add(out, tone(.32, pitch, pitch*.92, .35, ((1,1),(2,.16)), decay=.24, attack=.025), pos, .8)
+    one_shot("macrofago_alerta", out)
+    out = np.zeros((round(.86*SR), 2))
+    add(out, whoosh(.82, -1, .3, 100, 1700), 0)
+    add(out, tone(.76, 150, 275, .22, ((1,1),(2,.08)), attack=.07, decay=.65), .04, .6)
+    one_shot("macrofago_abrir", out)
+    out = np.zeros((round(.38*SR), 2))
+    add(out, bubble(.26, 170, .48), 0, .8)
+    add(out, whoosh(.24, -1, .22, 100, 1100), .06, .6)
+    one_shot("macrofago_cerrar", out)
+    out = np.zeros((round(1.15*SR), 2))
+    add(out, whoosh(.65, -1, .23, 90, 1300), 0, .65)
+    for pos, pitch in ((0, 294), (.23, 220), (.48, 147)):
+        add(out, tone(.57, pitch, pitch*.85, .3, ((1,1),(2,.12)), attack=.025, decay=.4, release=.3), pos, .65)
+    one_shot("macrofago_captura", out)
+    out = np.zeros((round(.45*SR), 2))
+    add(out, tone(.26, 392, 440, .2, attack=.02, decay=.19), 0, .65)
+    add(out, tone(.29, 494, 587, .2, attack=.02, decay=.21), .13, .6)
+    one_shot("macrofago_evitar", out)
+    RNG = previous_rng
+
+
 def main() -> None:
+    make_macrophage_effects()
     MASTER.mkdir(parents=True, exist_ok=True)
     WEB.mkdir(parents=True, exist_ok=True)
 
@@ -370,4 +402,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    if "--enemies-only" in sys.argv:
+        make_macrophage_effects()
+    else:
+        main()

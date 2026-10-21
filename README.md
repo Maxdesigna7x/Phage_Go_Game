@@ -10,7 +10,7 @@ python3 -m http.server 8873
 
 Abre http://localhost:8873. Para probar en tablet o móvil en la misma red, usa la dirección local del ordenador.
 
-El tablero ocupa toda la pantalla horizontal, tanto en tablet 4:3 como en móvil panorámico, sin fijarlo a 16:9 ni añadir bandas. En vertical se pausa y aparece un aviso para girar la pantalla. En móviles se ofrece pantalla completa; también puedes continuar en horizontal si prefieres o si el navegador la rechaza. Los controles respetan los márgenes seguros del dispositivo. El botón **Menú** está disponible durante la partida.
+El tablero ocupa toda la pantalla horizontal, tanto en tablet 4:3 como en móvil panorámico, sin fijarlo a 16:9 ni añadir bandas. En vertical se pausa y aparece un aviso para girar la pantalla con `Story.webp` de fondo; si el bloqueo inicial permanece activo en horizontal antes de entrar en pantalla completa, el aviso muestra `Intro_back_V2.webp` de fondo. En móviles se ofrece pantalla completa; también puedes continuar en horizontal si prefieres o si el navegador la rechaza. Los controles respetan los márgenes seguros del dispositivo. El botón **Menú** está disponible durante la partida.
 
 ## Controles
 
@@ -22,7 +22,13 @@ En ordenador: flechas o WASD y Espacio. La tarjeta «Mover» alterna movimiento 
 
 Con teclado, Tab recorre los controles y Enter o Espacio activa el control enfocado. En ADN, selecciona una copia; en nucleótidos, las teclas A/T/C/G responden a los juegos de pulsar y memoria, 1–4 intercambian fichas en ordenar, las flechas o A/D mueven la cesta en atrapar y Tab permite elegir fichas o destinos en los juegos restantes. El foco de teclado se marca en amarillo. Mantener Enter o Espacio sobre el control de inyección transfiere ADN; en lisis, pulsa varias veces. Escape vuelve al menú.
 
-Los modos se habilitan cuando termina la carga. Un recurso esencial que falle muestra **Reintentar**; las decoraciones y fuentes tienen alternativas para permitir jugar.
+## Carga priorizada de recursos
+
+La carga inicial está optimizada para mostrar de inmediato el fondo correspondiente a la orientación del dispositivo y evitar contención de ancho de banda en GitHub Pages:
+
+1. **Fondo inicial de bloqueo y portada (`fetchpriority="high"`):** `index.html` precarga únicamente la imagen de la orientación activa mediante `<link rel="preload" media="...">` y `<picture>` (`Story.webp` en vertical e `Intro_back_V2.webp` en horizontal). Los scripts se cargan con `defer fetchpriority="low"` y las fuentes web (`Nunito` y `Lilita One`) se activan tras cargar el fondo y el menú (`.fonts-ready`), evitando que `world-shapes.js` o las tipografías retrasen el primer fondo visible.
+2. **Menú y precarga de iconos (`MENU_ASSETS`):** En entrada vertical, `loadImages()` completa primero `Story.webp` y acto seguido descarga en paralelo `Intro_back_V2.webp`, `Title.webp`, `phage_easy.webp` y `phage_hard.webp`. El lienzo pinta el fondo del menú y el título en cuanto llegan.
+3. **Botones de modo ocultos durante la carga:** El contenedor `#menuButtons` permanece oculto (`.hidden`) y deshabilitado mientras se descargan los 83 recursos del juego (`EARLY_ASSETS` y el resto del catálogo en una cola continua de 4 workers sin pausas intermedias). Cuando `gameReady` pasa a `true`, se oculta `#loading` y aparecen los dos botones de modo (**Fácil** y **Difícil**) con sus iconos ya en caché. Un recurso esencial que falle muestra **Reintentar**; las decoraciones y fuentes tienen alternativas para permitir jugar.
 
 ## Ciclo y continuidad
 

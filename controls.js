@@ -108,7 +108,9 @@ function registerMinigameControls() {
           selected ? `Seleccionado ${item.code}. Elige otra ficha para intercambiarla.` : `Seleccionar ficha ${item.code}`,
           ()=>{
             selectSortNucleotide(i);
-            if (state === State.NUCLEOTIDE_MINIGAME) announceGameState(nucleotideGame.selectedSortIndex === null
+            if (state === State.NUCLEOTIDE_MINIGAME) announceGameState(nucleotideGame.sortSuccessRemaining != null
+              ? 'Secuencia ordenada. Minijuego completado.'
+              : nucleotideGame.selectedSortIndex === null
               ? 'Fichas intercambiadas. Sigue ordenando la cadena.'
               : `Ficha ${item.code} seleccionada. Elige otra para intercambiarla.`);
           });

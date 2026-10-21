@@ -51,8 +51,11 @@ for name, size in {
         assert alpha.getextrema()[0] == 0 and alpha.getbbox(), f'Invalid icon alpha: {name}'
 version = re.search(r'const BUILD_VERSION = "([^"]+)"', source)[1]
 html = (root / 'index.html').read_text()
+css = (root / 'style.css').read_text()
 for script in ('game.js', 'world.js', 'enemies.js', 'controls.js', 'audio/sound.js', 'style.css'):
     assert f'{script}?v={version}' in html, f'Build version differs: {script}'
 for image in re.findall(r'<img src="([^"]+)"', html):
     assert image.endswith(f'.webp?v={version}'), f'Unversioned menu image: {image}'
+for ref in re.findall(r'assets_webp/[^"\')\s]+', html + '\n' + css):
+    assert ref.endswith(f'.webp?v={version}'), f'Stale or unversioned WebP reference: {ref}'
 print(f'{len(paths)} WebP images checked; {shape_count} alpha/SDF shapes; {decoded_bytes / 2**20:.2f} MiB estimated RGBA')

@@ -622,6 +622,61 @@ window.SOUND_CATALOG = [
     "bytes": 9072
   },
   {
+    "id": "macrofago_alerta",
+    "group": "macrofago_alerta",
+    "label": "Macrófago detecta al fago",
+    "category": "Macrófago",
+    "files": [
+      "audio/sonidos/web/macrofago_alerta.mp3",
+      "audio/sonidos/web/macrofago_alerta.ogg"
+    ],
+    "bytes": 3427
+  },
+  {
+    "id": "macrofago_abrir",
+    "group": "macrofago_abrir",
+    "label": "Preparar captura",
+    "category": "Macrófago",
+    "files": [
+      "audio/sonidos/web/macrofago_abrir.mp3",
+      "audio/sonidos/web/macrofago_abrir.ogg"
+    ],
+    "bytes": 8726
+  },
+  {
+    "id": "macrofago_cerrar",
+    "group": "macrofago_cerrar",
+    "label": "Cerrar copa",
+    "category": "Macrófago",
+    "files": [
+      "audio/sonidos/web/macrofago_cerrar.mp3",
+      "audio/sonidos/web/macrofago_cerrar.ogg"
+    ],
+    "bytes": 4188
+  },
+  {
+    "id": "macrofago_captura",
+    "group": "macrofago_captura",
+    "label": "Fago capturado",
+    "category": "Macrófago",
+    "files": [
+      "audio/sonidos/web/macrofago_captura.mp3",
+      "audio/sonidos/web/macrofago_captura.ogg"
+    ],
+    "bytes": 8292
+  },
+  {
+    "id": "macrofago_evitar",
+    "group": "macrofago_evitar",
+    "label": "Persecución evadida",
+    "category": "Macrófago",
+    "files": [
+      "audio/sonidos/web/macrofago_evitar.mp3",
+      "audio/sonidos/web/macrofago_evitar.ogg"
+    ],
+    "bytes": 2803
+  },
+  {
     "id": "fondo_infeccion",
     "group": "fondo_infeccion",
     "label": "Infección lejana",

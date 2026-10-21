@@ -1,6 +1,6 @@
 # Estado actual de Phage-Go!
 
-Referencia del juego publicado y de su comportamiento actual. Corresponde a la versión 2026.10.20-53.
+Referencia del juego publicado y de su comportamiento actual. Corresponde a la versión 2026.10.20-58.
 
 ## Partida
 
@@ -44,7 +44,9 @@ El fondo contiene escenas decorativas de fagos que infectan bacterias. No colisi
 
 ## Pantalla, sonido y recursos
 
-El tablero ocupa la pantalla horizontal disponible sin fijarse a una proporción. En vertical se pausa y pide girar el dispositivo. En móviles se ofrece pantalla completa; si el navegador la rechaza se puede seguir en horizontal. La interfaz respeta los márgenes seguros.
+El tablero ocupa la pantalla horizontal disponible sin fijarse a una proporción. En vertical se pausa y pide girar el dispositivo mostrando `Story.webp` como fondo del aviso (`#rotateNotice`); cuando el aviso de bloqueo se muestra en horizontal antes de activar pantalla completa en móvil, utiliza `Intro_back_V2.webp` de fondo. En móviles se ofrece pantalla completa; si el navegador la rechaza se puede seguir en horizontal. La interfaz respeta los márgenes seguros.
+
+La carga inicial prioriza el fondo visible según la orientación (`<link rel="preload" media="...">` y `<picture>` con `fetchpriority="high"`), difiere los scripts (`defer fetchpriority="low"`) y pospone la activación de las fuentes web (`Nunito` y `Lilita One` mediante `.fonts-ready`) hasta haber cargado el fondo y el menú. En entrada vertical se descarga primero `Story.webp` y a continuación `MENU_ASSETS` (`Intro_back_V2.webp`, `Title.webp`, `phage_easy.webp` y `phage_hard.webp`), pintando el fondo del menú y el logo en el lienzo mientras una cola continua de 4 workers descarga `EARLY_ASSETS` y el resto de los 83 sprites. Durante toda la carga, los dos botones de modo (`#menuButtons`) permanecen ocultos (`.hidden`) y deshabilitados, y solo se muestran cuando todos los recursos del juego están listos (`gameReady = true`).
 
 El audio carga efectos comprimidos bajo demanda; no hay música ni ambientes continuos. Las preferencias guardadas en el navegador siguen aplicándose, aunque el panel temporal de edición de sonidos ya no aparece en la interfaz. El catálogo está descrito en [audio/README.md](../audio/README.md).
 
@@ -52,7 +54,7 @@ El juego carga imágenes WebP de distribución. Los originales gráficos se cons
 
 ## Documentación del proyecto
 
-- [README](../README.md): ejecución local, controles, verificaciones y publicación.
+- [README](../README.md): ejecución local, controles, carga priorizada, verificaciones y publicación.
 - [Minijuegos de nucleótidos](minijuegos-nucleotidos.md): reglas, orden por infección y ayudas.
 - [Tutorial visual](tutorial-visual.md): cuándo aparecen las demostraciones y cómo se reinician.
 - [Macrófago](macrofago-gameplay.md): comportamiento del enemigo y validación.
@@ -64,11 +66,11 @@ El juego carga imágenes WebP de distribución. Los originales gráficos se cons
 
 ## Verificación y publicación
 
-La suite actual contiene 119 pruebas automatizadas:
+La suite actual contiene 124 pruebas automatizadas:
 
     node --test tests/game.test.cjs tests/sound.test.cjs
 
-La comprobación de recursos revisa WebP, alfa, dimensiones, siluetas y versiones:
+La comprobación de recursos revisa WebP, alfa, dimensiones, siluetas y sincronización de `BUILD_VERSION` en HTML, CSS y JS:
 
     python3 scripts/check_assets.py
 

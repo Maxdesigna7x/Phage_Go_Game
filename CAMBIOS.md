@@ -1,18 +1,34 @@
 # Historial de cambios del juego
 
-## Estado publicado — versión 2026.10.20-53
+## Estado publicado — versión 2026.10.20-58
 
+- [x] Carga inicial priorizada por orientación: en móvil vertical se descarga y muestra primero `Story.webp` sin duplicados de caché; en bloqueo horizontal muestra `Intro_back_V2.webp` en `#rotateNotice`.
+- [x] Los botones de modo (`#menuButtons`: Fácil y Difícil) permanecen ocultos (`.hidden`) mientras se descargan los 83 recursos del juego (mientras se muestran el fondo del menú, el logo y el progreso de carga) y aparecen únicamente cuando `gameReady = true`, con sus iconos ya precargados en `MENU_ASSETS`.
+- [x] Scripts diferidos con baja prioridad de red (`defer fetchpriority="low"`), activación de fuentes web (`Nunito` y `Lilita One`) pospuesta hasta completar el fondo y menú inicial (`.fonts-ready`), y cola continua de 4 workers sin esperas ociosas entre `EARLY_ASSETS` y el resto del catálogo.
 - [x] Cada bacteria presenta una vez cada uno de los cinco minijuegos de nucleótidos, en orden aleatorio: arrastrar, pulsar la letra indicada, ordenar, atrapar piezas que caen y memoria.
 - [x] Las secuencias usan A, T, C y G en orden aleatorio. Ordenar comienza siempre con las cuatro fichas fuera de su posición correcta.
 - [x] Pulsar muestra una letra objetivo a la vez, inicia con casillas vacías y deja de señalar tras el primer acierto. Ordenar deja de mostrar el puntero después del primer intercambio.
 - [x] Memoria muestra las cuatro letras de una en una antes de pedir que se repita el patrón. Atrapar usa una caída lenta.
 - [x] En Atrapar, ratón y toque mueven la cesta por el desplazamiento del puntero desde cualquier zona del tablero; el gesto no coloca la cesta debajo del dedo.
 - [x] El progreso de los tutoriales visuales dura una partida y se reinicia al empezar otra.
-- [x] Documentación de jugabilidad, controles, tutoriales, mundo, recursos y verificaciones actualizada para reflejar el código actual.
-- Verificación actual: 119 pruebas automatizadas y comprobación de recursos con 84 WebP registrados y 40 siluetas alfa/SDF.
+- [x] Documentación de jugabilidad, controles, tutoriales, carga de recursos, mundo y verificaciones actualizada para reflejar el código actual.
+- Verificación actual: 124 pruebas automatizadas y comprobación de recursos (`scripts/check_assets.py`) con 84 WebP registrados, 40 siluetas alfa/SDF y validación estricta de `BUILD_VERSION` en HTML, CSS y JS.
 - Publicación: GitHub Pages desde main en https://maxdesigna7x.github.io/Phage_Go_Game/
 
 El detalle vigente está en [docs/estado-actual.md](docs/estado-actual.md). Las entradas posteriores conservan el historial de versiones anteriores.
+
+## Optimización de carga de recursos e imágenes de fondo — 20 de octubre de 2026
+
+- **Diagnóstico con emulación de red de GitHub Pages (CDP + Gzip):**
+  - `style.css` conservaba un parámetro `?v=` antiguo en `Story.webp`, provocando que en móvil vertical el navegador descargase `Story.webp` (295 KB) dos veces: primero para `#loadingBackdrop` oculto tras `#rotateNotice` y después para el `background-image` de `.rotate-notice` (terminando a los ~2254 ms en 4G lento).
+  - Las fuentes TTF (`Nunito.ttf` y `LilitaOne-Regular.ttf`, prioridad `VeryHigh`), los iconos `<img>` de `#menuButtons` y los scripts síncronos (`world-shapes.js`) competían por el ancho de banda antes de pintarse el primer fondo.
+  - En modo bloqueo horizontal antes de activar pantalla completa, `.rotate-notice` mostraba únicamente un degradado radial sin `Intro_back_V2.webp`.
+- **Solución implementada (`BUILD_VERSION = "20261020-58"`):**
+  - Sincronización de versión en `index.html`, `style.css` y `game.js`, validada automáticamente en `scripts/check_assets.py` para todas las referencias `assets_webp/`.
+  - Fondo `Intro_back_V2.webp` añadido a `.rotate-notice` en horizontal y `Story.webp` en `.rotate-notice.portrait-mobile` / `@media (orientation: portrait)`, compartiendo exactamente la misma URL cacheada que `<picture>` y `loadImages()`.
+  - `#menuButtons` inicia con la clase `.hidden` y sus `<img>` usan `loading="lazy" fetchpriority="low" decoding="async"`. `MENU_ASSETS` precarga `Intro_back_V2.webp`, `Title.webp`, `phage_easy.webp` y `phage_hard.webp` en segundo lugar tras `Story.webp`, pero `#menuButtons` no se revela hasta que finalizan los 83 recursos (`gameReady = true`).
+  - Los `<script>` usan `defer fetchpriority="low"` y las fuentes web se activan al añadir `.fonts-ready` tras el fondo/menú inicial, reduciendo el tiempo de aparición de `Story.webp` en `#rotateNotice` de ~2254 ms a ~836 ms en 4G lento (y ~460 ms en 4G rápido) y reduciendo en ~1 s el tiempo total hasta `gameReady`.
+
 
 ## Implementación inicial — 19 de octubre de 2026
 

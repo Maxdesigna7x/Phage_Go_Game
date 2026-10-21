@@ -11,7 +11,9 @@ class SoundEngine {
   async loadSettings() {
     try {
       const saved = localStorage.getItem('phage-sound-settings');
-      const config = saved ? JSON.parse(saved) : await (await fetch('audio/settings.json')).json();
+      const config = saved ? JSON.parse(saved) : window.location?.protocol === 'file:'
+        ? (await this.localData(), window.SOUND_LOCAL_SETTINGS)
+        : await (await fetch('audio/settings.json')).json();
       this.apply(config);
     } catch { /* Storage or config unavailable: all effects enabled. */ }
   }
@@ -30,11 +32,31 @@ class SoundEngine {
         this.master.gain.value = 0.55; this.master.connect(this.context.destination);
       }
       this.context.resume().catch(() => {});
+      if (window.location?.protocol === 'file:') void this.localData().catch(() => {});
     } catch { /* Silent fallback when audio is unsupported. */ }
+  }
+  async localData() {
+    if (window.SOUND_LOCAL_DATA) return window.SOUND_LOCAL_DATA;
+    if (!this.localDataReady) {
+      this.localDataReady = new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = 'audio/local-data.js?v=20261020-57';
+        script.onload = () => window.SOUND_LOCAL_DATA ? resolve(window.SOUND_LOCAL_DATA) : reject(new Error('Missing local audio'));
+        script.onerror = () => { script.remove(); reject(new Error('Cannot load local audio')); };
+        document.head.append(script);
+      }).catch(error => { this.localDataReady = null; throw error; });
+    }
+    return this.localDataReady;
   }
   async buffer(sound) {
     if (!this.buffers.has(sound.id)) {
       const pending = (async () => {
+        if (window.location?.protocol === 'file:') {
+          const data = await this.localData();
+          if (!data[sound.id]) throw new Error('Missing local effect '+sound.id);
+          const bytes = Uint8Array.from(atob(data[sound.id]), c => c.charCodeAt(0));
+          return await this.context.decodeAudioData(bytes.buffer);
+        }
         const probe = document.createElement('audio');
         for (const file of sound.files) {
           if (!probe.canPlayType(file.endsWith('.ogg') ? 'audio/ogg; codecs="vorbis"' : 'audio/mpeg')) continue;

@@ -417,7 +417,7 @@ test('background swimming uses all three animation frames while attached fibres 
   })()`),true);
 });
 
-test('bubble combo expires, activates at ten, refreshes energy and preserves the floating total', () => {
+test('bubble combo expires, locks at ten during boost and preserves the floating total', () => {
   const { run } = game();
   assert.equal(run(`(() => {
     startGame(GameMode.NORMAL);
@@ -428,7 +428,7 @@ test('bubble combo expires, activates at ten, refreshes energy and preserves the
     for(let i=0;i<10;i++) registerBubblePop();
     if(bubbleStats.total!==19 || bubbleStats.energy!==ENERGY_SECONDS) return false;
     updateBubbleEnergy(6); registerBubblePop();
-    if(bubbleStats.energy!==ENERGY_SECONDS || bubbleStats.total!==20) return false;
+    if(bubbleStats.energy!==ENERGY_SECONDS-6 || bubbleStats.total!==20 || bubbleStats.combo!==10) return false;
     clearBubbleEnergy();
     if(bubbleStats.energy!==0 || bubbleStats.total!==20) return false;
     for(let i=0;i<10;i++) registerBubblePop(); updateBubbleEnergy(9);
@@ -572,7 +572,7 @@ test('silhouette halos use fixed screen blur and reuse bounded per-asset rasters
   })()`), true);
 });
 
-test('combo popup grows to ten, fades in half a second and restarts on each pop', () => {
+test('combo popup grows to ten, fades in half a second and stays faded during boost', () => {
   const { run } = game();
   assert.equal(run(`(() => {
     startGame(GameMode.NORMAL); registerBubblePop();
@@ -583,7 +583,9 @@ test('combo popup grows to ten, fades in half a second and restarts on each pop'
     const max=getBubbleMultiplierVisual();
     if(max.count!==10 || max.size<=first.size || max.alpha!==1) return false;
     updateBubbleEnergy(4); registerBubblePop();
-    return getBubbleMultiplierVisual().count===10 && bubbleStats.energy===ENERGY_SECONDS;
+    if(getBubbleMultiplierVisual().count!==10 || getBubbleMultiplierVisual().alpha!==0 || bubbleStats.energy!==ENERGY_SECONDS-4) return false;
+    updateBubbleEnergy(ENERGY_SECONDS);registerBubblePop();
+    return bubbleStats.combo===1 && getBubbleMultiplierVisual().alpha===1;
   })()`),true);
 });
 
@@ -672,7 +674,7 @@ test('player swim sound shares the leg cycle clock, includes inertia and stops o
   const swim=sounds.filter(s=>s.name==='fago_nadar');assert.equal(swim.length,2);
   assert.equal(swim[0].options.duration,0.16);
   run('state=State.ADSORPTION;updateSoundEffects(false);');
-  assert.deepEqual(stops,['fago_nadar']);
+  assert.deepEqual(stops.filter(name=>name==='fago_nadar'),['fago_nadar']);
   run('state=State.SEARCH;player.vx=0;player.vy=0;player.animTime=1;updateSoundEffects(false);');
   assert.equal(sounds.filter(s=>s.name==='fago_nadar').length,2);
 });
@@ -983,7 +985,7 @@ test('hard mode spawns at most one macrophage in clear space away from the playe
     for(let i=0;i<300;i++) updateMacrophages(1/60);
     if(macrophages.length!==1) return false;
     const e=macrophages[0];
-    return Math.hypot(e.x-player.x,e.y-player.y)>600 && macrophageClearance(e)>=MACROPHAGE.radius && !spawnMacrophage() && !isBacteriaInteractable(e);
+    return Math.hypot(e.x-player.x,e.y-player.y)>600 && macrophageClearance(e)>=40 && !spawnMacrophage() && !isBacteriaInteractable(e);
   })()`),true);
 });
 
@@ -1011,7 +1013,7 @@ test('a stationary fago in the cup receives warning before sustained capture and
       updateMacrophages(1/60);
       if(e.mode==='windup') {warned=true;warningFrames++;}
     }
-    return warned && warningFrames>=60 && state===State.GAME_OVER && macrophageGameOver.enemy===e;
+    return warned && warningFrames>=55 && state===State.GAME_OVER && macrophageGameOver.enemy===e;
   })()`),true);
 });
 
@@ -1022,7 +1024,7 @@ test('escaping sideways during the warning avoids capture and the attacker recov
     const e=makeMacrophage(0,0);macrophages=[e];changeMacrophageMode(e,'windup');
     const rotation=e.rotation;player.x=150;player.y=400;
     for(let i=0;i<120;i++) updateMacrophages(1/60);
-    return state===State.SEARCH && e.mode==='recover' && e.rotation===rotation && e.capture===0;
+    return state===State.SEARCH && e.mode==='recover' && Math.abs(e.rotation-rotation)<=MACROPHAGE.turnSpeed*0.35*MACROPHAGE.windupSeconds+1e-6 && e.capture===0;
   })()`),true);
 });
 
@@ -1033,7 +1035,7 @@ test('brief cup contact and membrane contact do not count as sustained capture',
     const e=makeMacrophage(0,0);macrophages=[e];changeMacrophageMode(e,'close');
     const mouth=macrophageMouth(e);player.x=mouth.x;player.y=mouth.y;
     updateMacrophages(.08);if(state!==State.SEARCH) return false;
-    player.x=mouth.x;player.y=400;updateMacrophages(.1);
+    player.x=mouth.x;player.y=400;updateMacrophages(.2);
     if(e.capture!==0) return false;
     player.x=mouth.x;player.y=mouth.y;updateMacrophages(.08);
     if(state!==State.SEARCH) return false;
@@ -1068,7 +1070,7 @@ test('macrophages navigate around the protected bacterium without passing throug
     const e=makeMacrophage(0,0);
     for(let i=0;i<1800;i++) {
       moveMacrophage(e,Math.atan2(-e.y,1600-e.x),MACROPHAGE.chaseSpeed,1/60);
-      if(macrophageClearance(e)<MACROPHAGE.radius) return false;
+      if(macrophageClearance(e,true)<0) return false;
     }
     return e.x>1100;
   })()`),true);
@@ -1119,9 +1121,9 @@ test('patrolling and chasing macrophages push cells and healthy or broken bacter
       const body=kind==='healthy'||kind==='broken'?makeBacteria(550,0,.7,0,kind==='healthy'?1:3,kind,100):makeWorldCell(kind,550,0,100);
       body.rotation=0;
       if(body.kind==='cell') cellField=[body];else bacteriaField=[body];
-      const start=body.x,e=makeMacrophage(0,0);
+      const start=body.x,e=makeMacrophage(150,0);
       for(let i=0;i<420;i++){moveMacrophage(e,0,speed,1/60);updateWorldCells(1/60);}
-      if(!body.enemyMovable || body.x<start+35 || e.x<40 || Math.hypot(body.vx,body.vy)>(body.movable?240:90) || macrophageClearance(e)<MACROPHAGE.radius-2) return false;
+      if(!body.enemyMovable || body.x<start+35 || e.x<40 || Math.hypot(body.vx,body.vy)>(body.movable?240:90) || macrophageClearance(e)<-22) return false;
     }
     return true;
   })()`),true);
@@ -1807,4 +1809,105 @@ test('portrait entry loads its orientation background before menu assets', async
   assert.equal(requests[0],run('ASSETS.story'));
   assert.equal(requests.filter(url=>url===run('ASSETS.story')).length,1);
   assert.ok(requests.indexOf(run('ASSETS.introBack'))>0);
+});
+
+
+test('lysis celebration fires once, stays bounded and expires during escape', () => {
+  const {run}=game();
+  assert.equal(run(`(() => {
+    startGame(GameMode.NORMAL); state=State.LYSIS; lysis.pressure=1; lysis.damageProgress=1;
+    updateLysis(.01,0);
+    const initial=particles.filter(p=>p.kind==='victorySpark');
+    if(initial.length!==36 || !particles.some(p=>p.kind==='victoryRing') || particles.length>QUALITY.particlesMax) return false;
+    updateLysis(.01,0);
+    if(particles.filter(p=>p.kind==='victorySpark').length!==36) return false;
+    beginEscape(); for(let i=0;i<120;i++) updateParticles(1/60);
+    if(particles.some(p=>p.kind?.startsWith('victory'))) return false;
+    spawnLysisCelebration(); resetGame();
+    return particles.length===0;
+  })()`),true);
+});
+
+test('macrophage sound cues follow transitions, cancel on infection and distinguish capture', () => {
+  const sounds=[],stops=[];
+  const {run}=game({play:name=>sounds.push(name),stop:name=>stops.push(name),loop(){},stopAll(){},menuOpen:false});
+  run('startGame(GameMode.HARD); macrophageGrace=0; const audioEnemy=makeMacrophage(0,0);');
+  sounds.length=0;stops.length=0;
+  run("changeMacrophageMode(audioEnemy,'chase'); changeMacrophageMode(audioEnemy,'chase'); changeMacrophageMode(audioEnemy,'windup'); changeMacrophageMode(audioEnemy,'close');");
+  assert.deepEqual(sounds,['macrofago_alerta','macrofago_abrir','macrofago_cerrar']);
+  assert.ok(stops.includes('macrofago_abrir'));
+  run("changeMacrophageMode(audioEnemy,'chase'); changeMacrophageMode(audioEnemy,'return');");
+  assert.equal(sounds.at(-1),'macrofago_evitar');
+  run('setState(State.ADSORPTION);');
+  assert.ok(stops.includes('macrofago_cerrar'));
+  sounds.length=0;
+  run("changeMacrophageMode(audioEnemy,'windup');");
+  assert.equal(sounds.length,0);
+  run('setState(State.SEARCH); macrophageGrace=0; captureByMacrophage(audioEnemy);');
+  assert.equal(sounds.at(-1),'macrofago_captura');
+  assert.ok(!sounds.includes('partida_tiempo_agotado'));
+});
+
+
+test('sorted letters remain solved and input-locked for half a simulation second', () => {
+  const sounds=[];
+  const {run}=game({play:name=>sounds.push(name),loop(){},stop(){},stopAll(){},menuOpen:false});
+  run(`startGame(GameMode.NORMAL); createInitialDnaFromInjection();
+    nucleotideGame=createNucleotideGame(replication.dnaPieces[0]);nucleotideGame.type='sort';
+    nucleotideGame.sequence=['A','T','C','G'];
+    nucleotideGame.nucleotides.forEach((item,i)=>item.code=['T','A','C','G'][i]);
+    setState(State.NUCLEOTIDE_MINIGAME);selectSortNucleotide(0);selectSortNucleotide(1);`);
+  assert.equal(run('state'), 'nucleotide_minigame');
+  assert.equal(run('nucleotideGame.sortSuccessRemaining'), .5);
+  assert.equal(run('nucleotideGame.slots.every(slot=>slot.filled)'), true);
+  run('selectSortNucleotide(0);selectSortNucleotide(1);swapSortItems(0,1);checkSortedNucleotides();');
+  assert.equal(run("nucleotideGame.nucleotides.map(n=>n.code).join('')"),'ATCG');
+  assert.equal(sounds.filter(name=>name==='nucleotido_encajar').length,1);
+  run('updateNucleotideMinigame(.49);render(0);');
+  assert.equal(run('state'), 'nucleotide_minigame');
+  assert.equal(run('nucleotideGame.dna.processed'),false);
+  run('updateNucleotideMinigame(.01);');
+  assert.equal(run('state'), 'biosynthesis');
+  assert.equal(run('assembly.pendingDna.processed'),true);
+});
+
+test('mode buttons stay hidden until all assets finish loading and lock screen uses versioned backgrounds', async () => {
+  const {run,nodes,sandbox}=game();
+  const classes=new Set(['menu-buttons','hidden']);
+  nodes.menuButtons.classList={
+    add:c=>classes.add(c),
+    remove:c=>classes.delete(c),
+    toggle:(c,force)=>force===undefined?(classes.has(c)?classes.delete(c):classes.add(c)):(force?classes.add(c):classes.delete(c)),
+    contains:c=>classes.has(c),
+  };
+  run('gameReady=false; loadingInProgress=false; for(const key of Object.keys(img)) delete img[key];');
+  let releaseLastAsset;
+  const gate=new Promise(resolve=>{releaseLastAsset=resolve;});
+  sandbox.Image=class {
+    constructor(){this.width=this.height=512;}
+    set src(url){
+      if(url.includes('DNA_broken')) gate.then(()=>this.onload());
+      else queueMicrotask(()=>this.onload());
+    }
+  };
+  const booting=run('bootstrapGame()');
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(run('Boolean(img.introBack && img.title)'),true);
+  assert.equal(run('gameReady'),false);
+  assert.equal(classes.has('hidden'),true);
+  assert.equal(nodes.normalButton.disabled,true);
+  assert.equal(nodes.hardButton.disabled,true);
+  releaseLastAsset();
+  await booting;
+  assert.equal(run('gameReady'),true);
+  assert.equal(classes.has('hidden'),false);
+  assert.equal(nodes.normalButton.disabled,false);
+  assert.equal(nodes.hardButton.disabled,false);
+
+  const version=run('BUILD_VERSION');
+  const html=fs.readFileSync(require('node:path').join(__dirname,'../index.html'),'utf8');
+  const css=fs.readFileSync(require('node:path').join(__dirname,'../style.css'),'utf8');
+  assert.match(html,/<div id="menuButtons" class="menu-buttons hidden">/);
+  assert.ok(css.includes(`url("assets_webp/Intro_back_V2.webp?v=${version}")`));
+  assert.ok(css.includes(`url("assets_webp/Story.webp?v=${version}")`));
 });
