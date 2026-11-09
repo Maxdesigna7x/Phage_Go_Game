@@ -1,0 +1,67 @@
+name: Android APK
+
+on:
+  push:
+    branches: [main]
+    tags: ['android-v*']
+    paths:
+      - 'android/**'
+      - '.github/workflows/android-apk.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+
+      - name: Build installable APK
+        working-directory: android
+        run: ./gradlew --no-daemon assembleDebug
+
+      - name: Name APK
+        id: apk
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            APK="Phage-Go-${GITHUB_REF_NAME}.apk"
+          else
+            APK="Phage-Go-debug.apk"
+          fi
+          cp android/app/build/outputs/apk/debug/app-debug.apk "$APK"
+          echo "path=$APK" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phage-go-android-apk
+          path: ${{ steps.apk.outputs.path }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish APK in GitHub Releases
+        if: startsWith(github.ref, 'refs/tags/android-v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > release-notes.md <<'EOF'
+          APK instalable de Phage-Go para Android.
+
+          - Generada por GitHub Actions desde el código de este repositorio.
+          - Incluye el juego y sus recursos para jugar sin conexión.
+          - Compilación de depuración para instalación directa; no está firmada para Google Play.
+          EOF
+          gh release create "$GITHUB_REF_NAME" "${{ steps.apk.outputs.path }}" \
+            --title "Phage-Go Android $GITHUB_REF_NAME" \
+            --notes-file release-notes.md

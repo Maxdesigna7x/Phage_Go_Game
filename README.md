@@ -69,6 +69,8 @@ Con un servidor en el puerto 8765 y Playwright disponible, `node tests/browser-e
 
 La aplicación se publica mediante GitHub Pages desde la raíz de la rama `main`: https://maxdesigna7x.github.io/Phage_Go_Game/
 
+La versión Android también se compila actualmente en GitHub Actions. Cada etiqueta `android-v*` genera una APK instalable y la publica en [Releases](https://github.com/Maxdesigna7x/Phage_Go_Game/releases/latest); los cambios en `android/` producen además una APK descargable como artefacto de la ejecución de Actions. La APK incluye el juego y sus recursos para funcionar sin conexión, y está firmada para instalación directa de prueba. Para crear una versión nueva, publica una etiqueta con ese prefijo, por ejemplo `android-v1.0.1`. La compilación local es opcional; para Google Play se necesita preparar y firmar un AAB de distribución.
+
 ## Nuevos sprites
 
 El ensamblaje usa `Phage_phase_1.webp` al empaquetar ADN, `Phage_phase_2.webp` al unir cabeza y cola, y `Phage_phase_3.webp` al completar las fibras. Comparten lienzo de 354×469 y se conservan sus márgenes para mantener alineadas las piezas entre fases.

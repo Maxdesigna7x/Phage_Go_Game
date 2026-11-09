@@ -19,7 +19,7 @@ const storyIntroCaption = document.getElementById("storyIntroCaption");
 const displayNotice = document.getElementById("displayNotice");
 const retryLoadingButton = document.getElementById("retryLoadingButton");
 const loadingStatus = document.getElementById("loadingStatus");
-const BUILD_VERSION = "20261020-58";
+const BUILD_VERSION = "20261109-59";
 const STORY_INTRO_FADE_MS = 260;
 const SIMULATION_STEP = 1 / 60;
 const MAX_FRAME_SECONDS = 0.25; // Discard long stalls equally for gameplay and its clocks.
@@ -3376,7 +3376,10 @@ function screenToCanvas(ev) {
   };
 }
 
+const IS_NATIVE_ANDROID_APP = new URLSearchParams(window.location.search).get("native-app") === "1";
+
 function requiresFullscreen() {
+  if (IS_NATIVE_ANDROID_APP) return false;
   const root = document.documentElement;
   const supported = Boolean(root?.requestFullscreen || root?.webkitRequestFullscreen);
   return mobileControls && supported && !fullscreenDeclined && !document.fullscreenElement && !document.webkitFullscreenElement;
@@ -3419,7 +3422,7 @@ function resizeCanvasToViewport() {
   document.getElementById("orientationMessage").textContent = landscapeReady
     ? "Toca el botón para jugar a pantalla completa. Tu partida te espera."
     : "Toca el icono y gira tu dispositivo para jugar en horizontal.";
-  fullscreenButton.classList.toggle("hidden", Boolean(document.fullscreenElement || document.webkitFullscreenElement));
+  fullscreenButton.classList.toggle("hidden", IS_NATIVE_ANDROID_APP || Boolean(document.fullscreenElement || document.webkitFullscreenElement));
   if (blocked) {
     clearHeldInputs(); if (pausedAt === null) pausedAt = performance.now();
   }

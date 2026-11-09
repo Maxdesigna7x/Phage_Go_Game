@@ -1,0 +1,33 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.maxdesigna7x.phagego'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'com.maxdesigna7x.phagego'
+        minSdk 23
+        targetSdk 35
+        versionCode 1
+        versionName '1.0.0'
+    }
+}
+
+def webRoot = rootProject.projectDir.parentFile
+def packagedWebRoot = layout.buildDirectory.dir('generated/webAssets/www')
+
+tasks.register('copyWebGame', Sync) {
+    from(webRoot) {
+        include 'index.html', 'game.js', 'world.js', 'world-shapes.js', 'enemies.js', 'controls.js', 'style.css'
+        include 'assets_webp/**', 'assets_fonts/**'
+        include 'audio/catalog.js', 'audio/sound.js', 'audio/local-data.js', 'audio/settings.json', 'audio/sonidos/web/**'
+    }
+    into(packagedWebRoot)
+}
+
+android.sourceSets.main.assets.srcDir(packagedWebRoot)
+tasks.named('preBuild').configure {
+    dependsOn tasks.named('copyWebGame')
+}
