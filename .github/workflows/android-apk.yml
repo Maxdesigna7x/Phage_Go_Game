@@ -64,6 +64,10 @@ jobs:
           - Incluye el juego y sus recursos para jugar sin conexión.
           - Compilación de depuración para instalación directa; no está firmada para Google Play.
           EOF
-          gh release create "$GITHUB_REF_NAME" "${{ steps.apk.outputs.path }}" \
-            --title "Phage-Go Android $GITHUB_REF_NAME" \
-            --notes-file release-notes.md
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${{ steps.apk.outputs.path }}" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "${{ steps.apk.outputs.path }}" \
+              --title "Phage-Go Android $GITHUB_REF_NAME" \
+              --notes-file release-notes.md
+          fi

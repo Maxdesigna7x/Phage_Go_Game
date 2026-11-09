@@ -35,7 +35,7 @@ public final class MainActivity extends Activity {
         settings.setDisplayZoomControls(false);
 
         setContentView(webView);
-        webView.loadUrl("file:///android_asset/www/index.html?native-app=1");
+        webView.loadUrl("file:///android_asset/index.html?native-app=1");
     }
 
     @Override
