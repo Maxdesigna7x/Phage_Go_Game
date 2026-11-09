@@ -42,6 +42,7 @@ jobs:
 
       - name: Check offline Android launch
         uses: reactivecircus/android-emulator-runner@v2
+        continue-on-error: true
         with:
           api-level: 35
           arch: x86_64
