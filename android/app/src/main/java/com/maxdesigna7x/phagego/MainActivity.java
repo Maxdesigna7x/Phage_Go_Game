@@ -17,8 +17,6 @@ public final class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        hideSystemBars();
-
         webView = new WebView(this);
         webView.setBackgroundColor(0xff07151d);
         webView.setWebViewClient(new WebViewClient());
@@ -35,6 +33,7 @@ public final class MainActivity extends Activity {
         settings.setDisplayZoomControls(false);
 
         setContentView(webView);
+        hideSystemBars();
         webView.loadUrl("file:///android_asset/index.html?native-app=1");
     }
 
